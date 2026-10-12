@@ -1,7 +1,6 @@
 package com.jarvis.assistant
 
 import android.Manifest
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -21,6 +20,7 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 
@@ -237,12 +237,21 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 putExtra(RecognizerIntent.EXTRA_PROMPT, if (wakeMode) "Say Jarvis followed by a command" else "JARVIS is listening")
             }
             recognizer?.startListening(intent)
-        } catch (e: Exception) {
-            status("Could not start speech recognition: ${e.javaClass.simpleName}")
+        } catch (_: Exception) {
+            status("Could not start speech recognition on this device.")
         }
     }
 
-    private fun openApp(packageName: String, label: String) {
+    private fun openSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+            say("Opening settings.")
+        } catch (_: Exception) {
+            say("Settings could not be opened.")
+        }
+    }
+
+    private fun openAppByPackage(packageName: String, label: String) {
         val intent = packageManager.getLaunchIntentForPackage(packageName)
         if (intent == null) {
             say("$label is not installed.")
@@ -256,19 +265,40 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun openSettings() {
+    private fun openCamera() {
         try {
-            startActivity(Intent(Settings.ACTION_SETTINGS))
-            say("Opening settings.")
+            val intent = Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+            startActivity(intent)
+            say("Opening the camera.")
         } catch (_: Exception) {
-            say("Settings could not be opened.")
+            say("The camera app could not be opened.")
+        }
+    }
+
+    private fun openGallery() {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("content://media/external/images/media"))
+            startActivity(intent)
+            say("Opening your gallery.")
+        } catch (_: Exception) {
+            say("The gallery could not be opened.")
+        }
+    }
+
+    private fun openWebSearch(query: String) {
+        try {
+            val url = "https://www.google.com/search?q=" + Uri.encode(query)
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            say("Searching the web for $query.")
+        } catch (_: Exception) {
+            say("I could not open web search.")
         }
     }
 
     private fun deviceInfo() {
         val battery = try {
-            val bm = getSystemService(android.os.BatteryManager::class.java)
-            bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            val batteryManager = getSystemService(android.os.BatteryManager::class.java)
+            batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
         } catch (_: Exception) {
             0
         }
@@ -277,7 +307,13 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         say("Device: $model. Android $version. Battery $battery percent.")
     }
 
-    private fun executeCommand(raw: String) {
+    private fun readList(key: String): List<String> = prefs.getString(key, "")?.lines()?.filter { it.isNotBlank() } ?: emptyList()
+
+    private fun writeList(key: String, values: List<String>) {
+        prefs.edit().putString(key, values.filter { it.isNotBlank() }.joinToString("\n")).apply()
+    }
+
+    private fun handleBasicCommand(raw: String) {
         val q = raw.trim()
         val s = q.lowercase(Locale.ROOT)
 
@@ -286,66 +322,37 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             s == "stop listening" || s == "stop wake word" || s == "stop wakeword" -> stopWakeSession()
             s == "settings" || s == "open settings" -> openSettings()
             s == "battery" || s.contains("battery") || s == "device info" -> deviceInfo()
-            s.contains("open camera") || s == "camera" -> {
-                val cameraIntent = Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-                try {
-                    startActivity(cameraIntent)
-                    say("Opening the camera.")
-                } catch (_: Exception) {
-                    say("The camera app could not be opened.")
-                }
-            }
-            s.contains("open whatsapp") -> openApp("com.whatsapp", "WhatsApp")
-            s.contains("open instagram") -> openApp("com.instagram.android", "Instagram")
-            s.contains("open youtube") -> openApp("com.google.android.youtube", "YouTube")
-            s.contains("open gallery") || s.contains("photos") -> {
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("content://media/external/images/media"))
-                    startActivity(intent)
-                    say("Opening your gallery.")
-                } catch (_: Exception) {
-                    say("The gallery could not be opened.")
-                }
-            }
-            s.contains("weather") -> {
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=weather+near+me"))
-                startActivity(intent)
-                say("Opening weather information.")
-            }
-            s.contains("news") -> {
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://news.google.com/"))
-                startActivity(intent)
-                say("Opening the news.")
-            }
+            s.contains("open camera") || s == "camera" -> openCamera()
+            s.contains("open gallery") || s.contains("gallery") || s.contains("photos") -> openGallery()
+            s.contains("open whatsapp") -> openAppByPackage("com.whatsapp", "WhatsApp")
+            s.contains("open instagram") -> openAppByPackage("com.instagram.android", "Instagram")
+            s.contains("open youtube") -> openAppByPackage("com.google.android.youtube", "YouTube")
+            s.contains("weather") -> openWebSearch("weather near me")
+            s.contains("news") -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://news.google.com/")))
             s.contains("search for ") -> {
-                val query = q.substringAfter("search for ", q)
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query)))
-                startActivity(intent)
-                say("Searching the web for $query.")
+                val query = q.substringAfter("search for ")
+                openWebSearch(query)
             }
-            s.contains("remember ") -> {
-                val value = q.substringAfter("remember ", "")
-                val existing = prefs.getString("memory", "").orEmpty()
-                val next = (existing.lines() + value).filter { it.isNotBlank() }.takeLast(20).joinToString("\n")
-                prefs.edit().putString("memory", next).apply()
+            s.startsWith("remember ") -> {
+                val value = q.substringAfter("remember ")
+                val list = readList("memory") + value
+                writeList("memory", list.takeLast(20))
                 say("I will remember that on this device.")
             }
             s.startsWith("note ") -> {
-                val value = q.substringAfter("note ", "")
-                val existing = prefs.getString("notes", "").orEmpty()
-                val next = (existing.lines() + value).filter { it.isNotBlank() }.takeLast(20).joinToString("\n")
-                prefs.edit().putString("notes", next).apply()
+                val value = q.substringAfter("note ")
+                val list = readList("notes") + value
+                writeList("notes", list.takeLast(20))
                 say("Saved that note.")
             }
             s.startsWith("add task ") -> {
-                val task = q.substringAfter("add task ")
-                val existing = prefs.getString("tasks", "").orEmpty()
-                val next = (existing.lines() + task).filter { it.isNotBlank() }.takeLast(50).joinToString("\n")
-                prefs.edit().putString("tasks", next).apply()
-                say("Task added: $task")
+                val value = q.substringAfter("add task ")
+                val list = readList("tasks") + value
+                writeList("tasks", list.takeLast(50))
+                say("Task added: $value")
             }
             s == "show tasks" || s == "list tasks" -> {
-                val tasks = prefs.getString("tasks", "").orEmpty().lines().filter { it.isNotBlank() }
+                val tasks = readList("tasks")
                 if (tasks.isEmpty()) {
                     say("Your task list is empty.")
                 } else {
@@ -354,19 +361,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             }
             s.startsWith("call ") -> {
                 val name = q.substringAfter("call ")
-                say("I found a call request for $name. Please confirm in the UI or use voice confirmation.")
+                say("I heard a call request for $name. Please confirm in the UI or with a voice confirmation.")
             }
-            else -> say("I heard: $q. I can open settings, apps, and handle basic device commands.")
-        }
-    }
-
-    private fun command(raw: String) {
-        val q = raw.trim()
-        if (q.isBlank()) return
-        if (geminiApiKey.isNotBlank() && !isLocalCommand(q)) {
-            askGemini(q)
-        } else {
-            executeCommand(q)
+            else -> say("I heard: $q. I can open apps, settings, search the web, and manage basic tasks.")
         }
     }
 
@@ -387,6 +384,16 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             || s == "stop listening" || s == "stop wake word" || s == "stop wakeword"
     }
 
+    private fun command(raw: String) {
+        val q = raw.trim()
+        if (q.isBlank()) return
+        if (geminiApiKey.isNotBlank() && !isLocalCommand(q)) {
+            askGemini(q)
+        } else {
+            handleBasicCommand(q)
+        }
+    }
+
     private fun askGemini(text: String) {
         val key = geminiApiKey.trim()
         if (key.isBlank()) {
@@ -398,21 +405,22 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
         Thread {
             try {
-                val modelUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$key"
                 val payload = JSONObject()
-                    .put("contents", org.json.JSONArray().put(org.json.JSONObject()
-                        .put("parts", org.json.JSONArray().put(org.json.JSONObject().put("text", text)))))
+                    .put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", text)))))
                     .put("generationConfig", JSONObject().put("temperature", 0.2))
 
-                val connection = (java.net.URL(modelUrl).openConnection() as java.net.HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    doOutput = true
-                    connectTimeout = 20000
-                    readTimeout = 30000
-                    setRequestProperty("Content-Type", "application/json")
+                val url = java.net.URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$key")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.connectTimeout = 20000
+                connection.readTimeout = 30000
+                connection.setRequestProperty("Content-Type", "application/json")
+
+                connection.outputStream.use { os ->
+                    os.write(payload.toString().toByteArray(Charsets.UTF_8))
                 }
 
-                connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
                 val responseCode = connection.responseCode
                 val body = if (responseCode in 200..299) {
                     connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -424,8 +432,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     throw IllegalStateException("Gemini error: $body")
                 }
 
-                val json = JSONObject(body)
-                val reply = json
+                val response = JSONObject(body)
+                val reply = response
                     .getJSONArray("candidates")
                     .getJSONObject(0)
                     .getJSONObject("content")
