@@ -66,6 +66,11 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             shareSelectedMedia(uri, "image/*")
         }
     }
+    private val pickBackup = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) status("Backup import cancelled.")
+        else handleBackupImport(uri)
+    }
+
     private val pickVideo = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) {
             say("No video selected.")
@@ -1052,6 +1057,56 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun chooseBackupImport() {
+        try {
+            pickBackup.launch("application/json")
+        } catch (_: Exception) {
+            say("Could not open the backup picker on this device.")
+        }
+    }
+
+    private fun handleBackupImport(uri: Uri) {
+        try {
+            val raw = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                ?: throw IllegalArgumentException("Could not read the selected file")
+            if (raw.length > 1_000_000) throw IllegalArgumentException("Backup file is too large")
+            val backup = JSONObject(raw)
+            if (backup.optString("format") != "jarvis-local-backup" || backup.optInt("version") != 1) {
+                throw IllegalArgumentException("This is not a supported JARVIS backup")
+            }
+            fun readItems(key: String, maxItems: Int, maxLength: Int): List<String> {
+                val array = backup.optJSONArray(key) ?: JSONArray()
+                return (0 until minOf(array.length(), maxItems)).mapNotNull { index ->
+                    array.optString(index, "").trim().take(maxLength).takeIf { it.isNotBlank() }
+                }
+            }
+            val tasks = readItems("tasks", 50, 200)
+            val notes = readItems("notes", 50, 1500)
+            val memory = readItems("memory", 30, 500)
+            runOnUiThread {
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Restore JARVIS backup?")
+                    .setMessage("This will replace your current saved tasks, notes, and memories with " + tasks.size + " tasks, " + notes.size + " notes, and " + memory.size + " memories from the selected file. Your Gemini API key will not be changed.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Restore") { _, _ ->
+                        prefs.edit()
+                            .putString("tasks", tasks.joinToString("\n"))
+                            .putString("notes", notes.joinToString("\n"))
+                            .putString("memory", memory.joinToString("\n"))
+                            .apply()
+                        val restoredLanguage = backup.optString("language", lang)
+                        lang = when (restoredLanguage) { "hi-IN" -> "hi-IN"; "bn-IN" -> "bn-IN"; else -> "en-IN" }
+                        prefs.edit().putString("language", lang).apply()
+                        setTtsLanguageForText("")
+                        say("JARVIS backup restored on this device.")
+                    }
+                    .show()
+            }
+        } catch (e: Exception) {
+            status("Backup import failed: " + (e.message ?: "invalid file").take(180))
+        }
+    }
+
     private fun deviceStatusJson(): String {
         val batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager
         val battery = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -1072,6 +1127,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     inner class Bridge {
+        @JavascriptInterface fun importLocalBackup() = this@MainActivity.chooseBackupImport()
         @JavascriptInterface fun exportLocalBackup() = this@MainActivity.exportLocalBackup()
         @JavascriptInterface fun getDeviceStatus(): String = deviceStatusJson()
         @JavascriptInterface fun startListening() = listen()
