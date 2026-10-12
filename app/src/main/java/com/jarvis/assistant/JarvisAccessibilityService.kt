@@ -2,7 +2,6 @@ package com.jarvis.assistant
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.graphics.Rect
 import android.os.Build
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -46,8 +45,9 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     private fun performJarvisAction(raw: String): Boolean {
-        val action = raw.trim().lowercase(Locale.ROOT)
-        return when (action) {
+        val action = raw.trim()
+        val lower = action.lowercase(Locale.ROOT)
+        return when (lower) {
             "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
             "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
             "recents", "recent apps" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
@@ -58,12 +58,12 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
             "scroll down" -> scrollFirstScrollable(rootInActiveWindow, forward = true)
             "scroll up" -> scrollFirstScrollable(rootInActiveWindow, forward = false)
-            else -> {
-                when {
-                    action.startsWith("tap ") -> clickByText(action.removePrefix("tap ").trim())
-                    action.startsWith("click ") -> clickByText(action.removePrefix("click ").trim())
-                    else -> false
-                }
+            "send message" -> clickByText("send") || clickByDescription("send")
+            else -> when {
+                lower.startsWith("tap ") -> clickByText(action.substringAfter(" ").trim())
+                lower.startsWith("click ") -> clickByText(action.substringAfter(" ").trim())
+                lower.startsWith("type ") -> setTextInFocusedField(action.substringAfter(" ").trim())
+                else -> false
             }
         }
     }
@@ -76,14 +76,59 @@ class JarvisAccessibilityService : AccessibilityService() {
             var candidate: AccessibilityNodeInfo? = node
             while (candidate != null) {
                 if (candidate.isClickable && candidate.isEnabled) {
-                    val ok = candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    if (ok) return true
+                    if (candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
                 }
                 candidate = candidate.parent
             }
         }
-        Toast.makeText(this, "JARVIS couldn't find a clickable item named “$query”.", Toast.LENGTH_SHORT).show()
         return false
+    }
+
+    private fun clickByDescription(query: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        return clickDescriptionRecursive(root, query.lowercase(Locale.ROOT))
+    }
+
+    private fun clickDescriptionRecursive(node: AccessibilityNodeInfo, query: String): Boolean {
+        val description = node.contentDescription?.toString()?.lowercase(Locale.ROOT).orEmpty()
+        if (description.contains(query) && node.isClickable && node.isEnabled &&
+            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (clickDescriptionRecursive(child, query)) return true
+        }
+        return false
+    }
+
+    private fun setTextInFocusedField(text: String): Boolean {
+        if (text.isBlank()) return false
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focused != null && focused.isEditable && focused.isEnabled) {
+            return focused.performAction(
+                AccessibilityNodeInfo.ACTION_SET_TEXT,
+                android.os.Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+            )
+        }
+        val editable = findFirstEditable(root) ?: return false
+        return editable.performAction(
+            AccessibilityNodeInfo.ACTION_SET_TEXT,
+            android.os.Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            }
+        )
+    }
+
+    private fun findFirstEditable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isEditable && node.isEnabled) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findFirstEditable(child)
+            if (found != null) return found
+        }
+        return null
     }
 
     private fun scrollFirstScrollable(node: AccessibilityNodeInfo?, forward: Boolean): Boolean {
