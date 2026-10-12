@@ -78,7 +78,6 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             shareSelectedMedia(uri, "video/*")
         }
     }
-
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) listenNow() else status("Microphone permission denied. Voice features need microphone access.")
     }
@@ -157,8 +156,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
-        } else listenNow()
-    }
+        } else listenNow()    }
 
     private fun startWakeSession() {
         wakeMode = true
@@ -237,8 +235,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                                 command(heard)
                             }
                             else -> status("Heard: $heard — say “Jarvis” to activate a command.")
-                        }
-                        if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 1100)
+                        }                        if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 1100)
                     } else {
                         status("You said: $heard")
                         command(heard)
@@ -317,8 +314,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val matches = when {
                 exact.isNotEmpty() -> exact
                 starts.isNotEmpty() -> starts
-                else -> contains
-            }
+                else -> contains            }
             if (matches.isEmpty()) {
                 say("I couldn't find an installed app named $query.")
                 return
@@ -398,7 +394,6 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
-
     private fun openPlayStoreSearch(rawName: String) {
         val name = rawName.trim()
         if (name.isBlank()) { say("Tell me the app name."); return }
@@ -477,8 +472,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val safeQuery = query.replace("%", "").replace("_", "").trim()
         val found = mutableListOf<ContactMatch>()
         val projection = arrayOf(
-            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.NUMBER
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,            ContactsContract.CommonDataKinds.Phone.NUMBER
         )
         try {
             contentResolver.query(
@@ -557,8 +551,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             status("Android needs Call permission to place this call after your confirmation.")
             callPermission.launch(Manifest.permission.CALL_PHONE)
-            return
-        }
+            return        }
         val intent = Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null))
             .putExtra(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
         pendingCallNumber = null
@@ -637,8 +630,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun removeTask(rawQuery: String) {
-        val query = rawQuery.trim()
-        val tasks = prefs.getString("tasks", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
+        val query = rawQuery.trim()        val tasks = prefs.getString("tasks", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
         val index = query.toIntOrNull()?.minus(1)?.takeIf { it in tasks.indices }
             ?: tasks.indexOfFirst { it.equals(query, ignoreCase = true) }.takeIf { it >= 0 }
             ?: tasks.indexOfFirst { it.contains(query, ignoreCase = true) }.takeIf { it >= 0 }
@@ -717,8 +709,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             status("Gemini API key removed. JARVIS is using local commands.")
             return
         }
-        geminiApiKey = key
-        prefs.edit().putString("gemini_api_key", key).apply()
+        geminiApiKey = key        prefs.edit().putString("gemini_api_key", key).apply()
         status("Gemini key saved on this device. Test with a natural voice command.")
     }
 
@@ -797,8 +788,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 if (text.isBlank()) throw IllegalStateException("Gemini returned an empty response.")
                 val firstBrace = text.indexOf('{')
                 val lastBrace = text.lastIndexOf('}')
-                if (firstBrace < 0 || lastBrace <= firstBrace) throw IllegalStateException("Gemini returned an invalid action plan.")
-                val plan = JSONObject(text.substring(firstBrace, lastBrace + 1))
+                if (firstBrace < 0 || lastBrace <= firstBrace) throw IllegalStateException("Gemini returned an invalid action plan.")                val plan = JSONObject(text.substring(firstBrace, lastBrace + 1))
                 val action = plan.optString("action", "reply").lowercase(Locale.ROOT)
                 val localCommand = plan.optString("command", "").trim()
                 val spokenReply = plan.optString("reply", "").trim().ifBlank { "I understood your request, but I need you to clarify what you want me to do." }
@@ -877,8 +867,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             "गाना चलाओ", "म्यूजिक चलाओ", "अगला गाना", "पिछला गाना", "खबर", "समाचार", "मौसम",
             "व्हाट्सएप खोलो", "इंस्टाग्राम खोलो", "यूट्यूब खोलो", "गैलरी खोलो", "मेरे काम दिखाओ",
             "मेरे नोट्स", "क्या याद है", "আমার কাজ দেখাও"
-        )
-        return localHints.any { s.contains(it) }
+        )        return localHints.any { s.contains(it) }
     }
 
     private fun command(raw: String) {
@@ -957,8 +946,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             s == "scroll down" || s.contains("neeche scroll karo") || s.contains("नीचे स्क्रॉल करो") || s.contains("neeche jao") -> accessibilityAction("scroll down")
             s == "scroll up" || s.contains("upar scroll karo") || s.contains("ऊपर स्क्रॉल करो") || s.contains("upar jao") -> accessibilityAction("scroll up")
             s.startsWith("tap ") -> accessibilityAction(q)
-            s.startsWith("click ") -> accessibilityAction(q)
-            s.contains("battery") || s.contains("device info") || s.contains("phone information") || s.contains("battery kitni hai") || s.contains("phone ki jankari") || s.contains("बैटरी कितनी है") || s.contains("बैटरी दिखाओ") || s.contains("फोन की जानकारी") -> deviceInfo()
+            s.startsWith("click ") -> accessibilityAction(q)            s.contains("battery") || s.contains("device info") || s.contains("phone information") || s.contains("battery kitni hai") || s.contains("phone ki jankari") || s.contains("बैटरी कितनी है") || s.contains("बैटरी दिखाओ") || s.contains("फोन की जानकारी") -> deviceInfo()
             s.contains("open camera") || s == "camera" || s.contains("take a photo") || s.contains("camera kholo") || s.contains("photo lo") || s.contains("कैमरा खोलो") || s.contains("फोटो लो") -> safeLaunch(Intent(MediaStore.ACTION_IMAGE_CAPTURE), if (lang == "hi-IN") "कैमरा खोल रहा हूँ। फोटो लेने के लिए कैमरे में बटन दबाएँ।" else "Opening the camera. Press the shutter in your camera app.")
             s.contains("weather") || s.contains("mausam") || s.contains("मौसम") -> webSearch("weather near me")
             s.contains("news") || s.contains("khabar") || s.contains("samachar") || s.contains("खबर") || s.contains("समाचार") -> safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse("https://news.google.com/")), if (lang == "hi-IN") "ताज़ा समाचार खोल रहा हूँ।" else "Opening the latest news.")
@@ -1037,8 +1025,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun exportLocalBackup() {
         runOnUiThread {
-            android.app.AlertDialog.Builder(this)
-                .setTitle("Export JARVIS local data?")
+            android.app.AlertDialog.Builder(this)                .setTitle("Export JARVIS local data?")
                 .setMessage("This backup contains your saved tasks, notes, and memories. It does not include your Gemini API key. Choose a trusted destination when sharing.")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Continue") { _, _ ->
@@ -1117,8 +1104,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun deviceStatusJson(): String {
-        val batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager
-        val battery = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager        val battery = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val model = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL
         val version = android.os.Build.VERSION.RELEASE ?: "Unknown"
         val appVersion = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown" } catch (_: Exception) { "Unknown" }
@@ -1139,10 +1125,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         @JavascriptInterface fun importLocalBackup() = this@MainActivity.chooseBackupImport()
         @JavascriptInterface fun exportLocalBackup() = this@MainActivity.exportLocalBackup()
         @JavascriptInterface fun getDeviceStatus(): String = deviceStatusJson()
-        @JavascriptInterface fun startListening() = listen()
-        @JavascriptInterface fun startWakeWord() = startWakeSession()
-        @JavascriptInterface fun openAccessibilitySettings() = safeLaunch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "Opening Accessibility settings. Review the service permissions before enabling.")
-        @JavascriptInterface fun stopWakeWord() = stopWakeSession()
+        // WebView JavascriptInterface methods are called on a background thread.
+        // SpeechRecognizer and Activity Result permission launchers must be used on the main thread.
+        @JavascriptInterface fun startListening() { runOnUiThread { listen() } }
+        @JavascriptInterface fun startWakeWord() { runOnUiThread { startWakeSession() } }
+        @JavascriptInterface fun openAccessibilitySettings() { runOnUiThread { safeLaunch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "Opening Accessibility settings. Review the service permissions before enabling.") } }
+        @JavascriptInterface fun stopWakeWord() { runOnUiThread { stopWakeSession() } }
         @JavascriptInterface fun setLanguage(code: String) {
             lang = when (code.uppercase(Locale.ROOT)) { "HI" -> "hi-IN"; "BN" -> "bn-IN"; else -> "en-IN" }
             prefs.edit().putString("language", lang).apply()
