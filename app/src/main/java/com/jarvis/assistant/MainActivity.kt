@@ -302,9 +302,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             tts?.language = when (code.uppercase(Locale.ROOT)) { "HI" -> Locale("hi", "IN"); "BN" -> Locale("bn", "IN"); else -> Locale.US }
         }
         @JavascriptInterface fun speak(text: String) = say(text)
-        @JavascriptInterface fun saveNote(text: String) = saveNote(text)
-        @JavascriptInterface fun remember(text: String) = remember(text)
-        @JavascriptInterface fun showMemory() = showMemory()
+        @JavascriptInterface fun saveNote(text: String) = this@MainActivity.saveNote(text)
+        @JavascriptInterface fun remember(text: String) = this@MainActivity.remember(text)
+        @JavascriptInterface fun showMemory() = this@MainActivity.showMemory()
         @JavascriptInterface fun askAI(text: String) {
             status("Opening ChatGPT in your browser. For built-in AI chat, configure a secure backend endpoint and API key outside the APK.")
             safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse("https://chatgpt.com/")), "Opening ChatGPT.")
