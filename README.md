@@ -14,15 +14,16 @@ Kotlin/WebView Android voice-assistant starter with an animated sci-fi interface
 - Accessibility-assisted typing into the currently focused editable field with “type your message”, and a separate explicit “send message” command. UI labels and layouts vary by app/version; the send action may fail or target a different visible Send control, so inspect the chat before using it.
 - Explicit photo/video sharing flow for WhatsApp or Instagram using Android's media picker and share intent. JARVIS only receives the single item the user picks; the user must choose/review the destination and complete the send/post action in the target app.
 - Media play/pause/next/previous key dispatch (behavior depends on the active media app).
-- Local notes and memory stored in app-private SharedPreferences.
+- Local notes and personal memory stored in app-private SharedPreferences.
+- Persistent local task list: add tasks, read pending tasks aloud, and mark tasks complete by list number or task name. Task storage stays on this device.
 - Battery percentage and basic device/Android version details.
 - Calendar reminder handoff that opens the calendar event editor for the user to review and save.
 - Optional Android AccessibilityService for explicit Home, Back, Recents, Notifications, Quick Settings, scrolling, tapping visible UI text, and locking the screen on supported Android versions.
 - Animated holographic-style interface, quick actions, notes, memory and AI-chat launcher.
 - GitHub Actions workflow to build a debug APK.
 
-## AI chat and APIs
-The AI-chat button currently opens ChatGPT in the browser. A real in-app AI conversation and natural-language planning layer requires a backend service that keeps the provider API key server-side. Do not put API keys in Android source or the APK. The current command interpreter is local rule-based command matching; it is not yet an integrated LLM agent. Weather currently opens a web search and news opens Google News, so no weather/news API key is required for this baseline.
+## Gemini natural-language planner
+The app has a runtime Gemini API-key field and sends a natural-language request to Gemini for a structured action plan. The returned plan can only invoke commands implemented locally in `MainActivity.kt`; it does not give the model unrestricted control over Android or other apps. English, Hindi/Hinglish and Bengali behavior depends on the selected language, Gemini's response, Android speech recognition, and the installed text-to-speech voices. The key is stored in app-private preferences for this prototype, but it can still be extracted from a mobile app. For a public release, use a backend that keeps provider credentials server-side and applies rate limits. Weather opens a web search and news opens Google News; those are not live in-app weather/news APIs.
 
 ## Permissions and Android limits
 - Microphone permission is requested when voice input is started.
@@ -36,7 +37,7 @@ The AI-chat button currently opens ChatGPT in the browser. A real in-app AI conv
 - This baseline does not request contacts, call-log, SMS, device-admin, location, or broad file permissions. Photo/video sharing uses Android's system content picker rather than scanning the full gallery.
 
 ## Build APK
-Open **Actions → Build JARVIS AI APK** and run the workflow, or push a commit to `main`. After success, download the `JARVIS-AI-debug-APK` artifact from the workflow run and extract `app-debug.apk`. Compilation and real-device behavior still need to be verified in GitHub Actions and on an Android phone.
+Open **Actions → Build JARVIS AI APK** and run the workflow, or push a commit to `main`. After success, download the `JARVIS-AI-debug-APK` artifact from the workflow run and extract `app-debug.apk`. A successful CI build confirms compilation and the configured test task; it does not prove that all voice commands, languages, permissions, or accessibility actions work on every physical device. Real-device testing is still required.
 
 ## Main files
 - `app/src/main/java/com/jarvis/assistant/MainActivity.kt` — native voice input, commands, notes/memory, reminders, device info and media controls.
