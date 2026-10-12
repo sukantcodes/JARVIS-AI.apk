@@ -4,7 +4,8 @@ Kotlin/WebView Android voice-assistant starter with an animated sci-fi interface
 
 ## Implemented in source
 - Push-to-talk speech recognition and Android Text-to-Speech.
-- English, Hindi and Bengali language selection.
+- English, Hindi and Bengali language selection, plus Hindi/Hinglish command aliases for navigation, camera, battery info, weather/news, notes/memory, reminders, media playback, Wi-Fi/Bluetooth settings, YouTube and WhatsApp.
+- Wake-word matching accepts “Jarvis” and “जार्विस”; Hindi recognition quality depends on the Android speech service and installed language support.
 - Explicit foreground wake-word session: say “Jarvis” followed by a command; tap Stop to end. This is repeated Android speech recognition, not a low-power offline hotword engine, and is not designed to run while the app is closed.
 - Local commands for date/time, settings shortcuts, alarms, camera launch, phone dialer, opening YouTube/WhatsApp, web search, weather search and Google News.
 - Media play/pause/next/previous key dispatch (behavior depends on the active media app).
