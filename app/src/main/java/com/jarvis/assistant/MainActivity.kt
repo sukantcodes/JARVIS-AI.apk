@@ -226,6 +226,19 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
     }
 
+    // Queue progress narration so the final reply does not cut off an earlier step.
+    private fun sayProgress(text: String) {
+        status(text)
+        setTtsLanguageForText(text)
+        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "jarvis_progress")
+    }
+
+    private fun localized(en: String, hi: String, bn: String): String = when (lang) {
+        "hi-IN" -> hi
+        "bn-IN" -> bn
+        else -> en
+    }
+
     private fun safeLaunch(intent: Intent, successMessage: String) {
         try {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -519,6 +532,75 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun readTasks(): JSONArray {
+        return try { JSONArray(prefs.getString("tasks", "[]").orEmpty()) } catch (_: Exception) { JSONArray() }
+    }
+
+    private fun persistTasks(tasks: JSONArray) {
+        prefs.edit().putString("tasks", tasks.toString()).apply()
+    }
+
+    private fun addTask(raw: String) {
+        val clean = raw.trim().take(250)
+        if (clean.isBlank()) {
+            say(localized("Tell me the task to add.", "कौन-सा काम जोड़ना है, बताइए।", "কোন কাজটি যোগ করব, বলুন।"))
+            return
+        }
+        val tasks = readTasks()
+        if (tasks.length() >= 100) {
+            say(localized("Your task list is full. Complete or remove some tasks first.", "आपकी टास्क सूची भर गई है। पहले कुछ काम पूरे करें या हटाएँ।", "আপনার কাজের তালিকা পূর্ণ। আগে কিছু কাজ সম্পন্ন করুন বা সরান।"))
+            return
+        }
+        tasks.put(JSONObject().put("text", clean).put("done", false))
+        persistTasks(tasks)
+        say(localized("Added task: $clean", "काम जोड़ दिया: $clean", "কাজ যোগ করা হয়েছে: $clean"))
+    }
+
+    private fun listTasks() {
+        val tasks = readTasks()
+        if (tasks.length() == 0) {
+            say(localized("You have no saved tasks. Say add task followed by the task.", "आपकी कोई सहेजी हुई टास्क नहीं है। काम जोड़ने के लिए ‘add task’ कहें।", "আপনার কোনো সংরক্ষিত কাজ নেই। কাজ যোগ করতে ‘add task’ বলুন।"))
+            return
+        }
+        val summary = buildString {
+            for (i in 0 until tasks.length()) {
+                val item = tasks.optJSONObject(i) ?: continue
+                append(i + 1).append(". ")
+                append(if (item.optBoolean("done")) localized("Completed: ", "पूरा हुआ: ", "সম্পন্ন: ") else "")
+                append(item.optString("text")).append(". ")
+            }
+        }
+        say((localized("Your tasks are: ", "आपके काम हैं: ", "আপনার কাজগুলো হলো: ") + summary).take(1800))
+    }
+
+    private fun completeTask(rawNumber: String) {
+        val number = rawNumber.trim().toIntOrNull()
+        val tasks = readTasks()
+        if (number == null || number !in 1..tasks.length()) {
+            say(localized("Give a valid task number from your task list.", "अपनी सूची में से सही टास्क नंबर बताइए।", "আপনার তালিকা থেকে সঠিক কাজের নম্বর বলুন।"))
+            return
+        }
+        val item = tasks.optJSONObject(number - 1) ?: JSONObject()
+        item.put("done", true)
+        tasks.put(number - 1, item)
+        persistTasks(tasks)
+        say(localized("Marked task $number complete: ${item.optString("text")}", "काम $number पूरा चिह्नित किया: ${item.optString("text")}", "কাজ $number সম্পন্ন হিসেবে চিহ্নিত: ${item.optString("text")}"))
+    }
+
+    private fun removeTask(rawNumber: String) {
+        val number = rawNumber.trim().toIntOrNull()
+        val tasks = readTasks()
+        if (number == null || number !in 1..tasks.length()) {
+            say(localized("Give a valid task number from your task list.", "अपनी सूची में से सही टास्क नंबर बताइए।", "আপনার তালিকা থেকে সঠিক কাজের নম্বর বলুন।"))
+            return
+        }
+        val removed = tasks.optJSONObject(number - 1)?.optString("text").orEmpty()
+        val remaining = JSONArray()
+        for (i in 0 until tasks.length()) if (i != number - 1) remaining.put(tasks.opt(i))
+        persistTasks(remaining)
+        say(localized("Removed task: $removed", "काम हटा दिया: $removed", "কাজ সরানো হয়েছে: $removed"))
+    }
+
     private fun saveNote(note: String) {
         val clean = note.trim().take(1500)
         if (clean.isBlank()) { say("Tell me what note to save."); return }
@@ -663,7 +745,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             say("I didn't hear a command.")
             return
         }
-        say(when (lang) { "hi-IN" -> "मैं आपकी बात समझ रहा हूँ।"; "bn-IN" -> "আমি আপনার কথা বুঝছি।"; else -> "I am understanding your request." })
+        sayProgress(when (lang) { "hi-IN" -> "मैं आपकी बात समझ रहा हूँ।"; "bn-IN" -> "আমি আপনার কথা বুঝছি।"; else -> "I am understanding your request." })
+        sayProgress(when (lang) { "hi-IN" -> "अब मैं Gemini से अनुरोध जाँच रहा हूँ।"; "bn-IN" -> "এখন Gemini-তে আপনার অনুরোধ যাচাই করছি।"; else -> "Now I am checking your request with Gemini." })
         aiExecutor.execute {
             var connection: HttpURLConnection? = null
             try {
@@ -687,6 +770,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     whatsapp search CONTACT; instagram search ACCOUNT; share photo on whatsapp;
                     share video on whatsapp; share photo on instagram; share video on instagram;
                     remember TEXT; note TEXT; show my notes; add task TEXT; show tasks; complete task NAME_OR_NUMBER; remind me to TEXT; set alarm TIME;
+                    add task TEXT; list tasks; complete task NUMBER; remove task NUMBER;
                     device info; what time; help; call CONTACT.
                     For a request to launch an installed app, use "open app APPNAME".
                     If the task needs an unsupported capability, say so honestly in reply and use action "reply".
@@ -733,18 +817,19 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 val localCommand = plan.optString("command", "").trim()
                 val spokenReply = plan.optString("reply", "").trim().ifBlank { "I understood your request, but I need you to clarify what you want me to do." }
                 runOnUiThread {
+                    sayProgress(when (lang) { "hi-IN" -> "अनुरोध समझ गया। अब अगला कदम कर रहा हूँ।"; "bn-IN" -> "অনুরোধ বুঝেছি। এখন পরের ধাপটি করছি।"; else -> "I understood the request. Now I am taking the next step." })
                     when (action) {
                         "command" -> {
                             if (localCommand.isBlank()) {
-                                say(spokenReply)
+                                sayProgress(spokenReply)
                             } else {
                                 suppressCommandSpeech = true
                                 try { executeCommand(localCommand) } finally { suppressCommandSpeech = false }
-                                say(spokenReply)
+                                sayProgress(spokenReply)
                             }
                         }
-                        "clarify", "reply" -> say(spokenReply)
-                        else -> say(spokenReply)
+                        "clarify", "reply" -> sayProgress(spokenReply)
+                        else -> sayProgress(spokenReply)
                     }
                 }
             } catch (e: Exception) {
@@ -789,6 +874,15 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             s.startsWith("play store search ") -> openPlayStoreSearch(q.substringAfter("play store search "))
             s.startsWith("install apk ") -> openApkSource(q.substringAfter("install apk "))
             s.startsWith("download apk ") -> openApkSource(q.substringAfter("download apk "))
+            s.startsWith("add task ") -> addTask(q.substringAfter("add task "))
+            s.startsWith("create task ") -> addTask(q.substringAfter("create task "))
+            s.startsWith("task add ") -> addTask(q.substringAfter("task add "))
+            s.startsWith("complete task ") -> completeTask(q.substringAfter("complete task "))
+            s.startsWith("finish task ") -> completeTask(q.substringAfter("finish task "))
+            s.startsWith("task complete ") -> completeTask(q.substringAfter("task complete "))
+            s.startsWith("remove task ") -> removeTask(q.substringAfter("remove task "))
+            s.startsWith("delete task ") -> removeTask(q.substringAfter("delete task "))
+            s == "list tasks" || s == "show tasks" || s == "what are my tasks" || s == "show my tasks" -> listTasks()
             s == "help" || s == "what can you do" || s == "madad" || s.contains("kya kar sakte ho") || s.contains("क्या कर सकते हो") || s.contains("मदद") -> say(if (lang == "hi-IN") "मैं ऐप्स और सेटिंग्स खोल सकता हूँ, वेब खोज सकता हूँ, मौसम और समाचार दिखा सकता हूँ, कैमरा खोल सकता हूँ, संगीत नियंत्रित कर सकता हूँ, नोट्स, यादें और काम सहेज सकता हूँ, रिमाइंडर बना सकता हूँ और बैटरी की जानकारी बता सकता हूँ।" else "I can open installed apps by name, use supported accessibility actions like tap, type, scroll and back, open settings, search the web, show weather and news, control basic media keys, save notes, create reminders, and report device details.")
             s.contains("what time") || s == "time" || s.contains("what date") || s == "date" || s.contains("kitne baje") || s.contains("samay batao") || s.contains("time batao") || s.contains("tareekh batao") || s.contains("कितने बजे") || s.contains("समय बताओ") || s.contains("तारीख बताओ") -> say((if (lang == "hi-IN") "अभी तारीख और समय है: " else "The date and time is: ") + DateFormat.getDateTimeInstance().format(Date()))
             s.startsWith("add task ") || s.startsWith("create task ") || s.startsWith("task add ") || s.startsWith("काम जोड़ो ") || s.startsWith("काम जोड़ें ") || s.startsWith("কাজ যোগ করুন ") -> addTask(when {
