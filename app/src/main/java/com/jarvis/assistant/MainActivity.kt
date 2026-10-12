@@ -1,16 +1,25 @@
 package com.jarvis.assistant
 
 import android.Manifest
+import android.app.AlarmManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.AudioManager.STREAM_MUSIC
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.AlarmClock
+import android.provider.CalendarContract
+import android.provider.MediaStore
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.view.KeyEvent
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -18,6 +27,8 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import java.text.DateFormat
+import java.util.Date
 import java.util.Locale
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
@@ -25,9 +36,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var lang = "en-IN"
+    private var wakeMode = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val prefs by lazy { getSharedPreferences("jarvis_local_memory", MODE_PRIVATE) }
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (ok) listenNow() else status("Microphone permission was denied.")
+        if (ok) listenNow() else status("Microphone permission denied. Voice features need microphone access.")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,14 +51,16 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.webChromeClient = WebChromeClient()
-        web.webViewClient = WebViewClient()
+        web.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean = false
+        }
         web.addJavascriptInterface(Bridge(), "JarvisAndroid")
         setContentView(web)
         web.loadUrl("file:///android_asset/index.html")
     }
 
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) tts?.language = Locale.US
+    override fun onInit(statusCode: Int) {
+        if (statusCode == TextToSpeech.SUCCESS) tts?.language = Locale.US
     }
 
     private fun status(text: String) {
@@ -55,6 +71,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun listen() {
+        wakeMode = false
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             status("Speech recognition is unavailable. Enable a speech service on your phone.")
             return
@@ -64,21 +81,53 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         } else listenNow()
     }
 
+    private fun startWakeSession() {
+        wakeMode = true
+        status("Wake-word session starting. Keep JARVIS open and say “Jarvis” followed by a command. Tap Stop to end.")
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        } else listenNow()
+    }
+
+    private fun stopWakeSession() {
+        wakeMode = false
+        handler.removeCallbacksAndMessages(null)
+        recognizer?.cancel()
+        status("Wake-word session stopped.")
+    }
+
     private fun listenNow() {
+        if (!wakeMode && !SpeechRecognizer.isRecognitionAvailable(this)) return
         try {
             recognizer?.destroy()
             recognizer = SpeechRecognizer.createSpeechRecognizer(this)
             recognizer?.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) = status("Listening…")
-                override fun onBeginningOfSpeech() = status("Voice detected")
+                override fun onReadyForSpeech(params: Bundle?) {
+                    status(if (wakeMode) "Wake-word session active — say “Jarvis” and a command." else "Listening…")
+                }
+                override fun onBeginningOfSpeech() { if (!wakeMode) status("Voice detected") }
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() = status("Processing…")
-                override fun onError(error: Int) = status("Speech error. Tap the microphone and try again.")
+                override fun onEndOfSpeech() { if (!wakeMode) status("Processing…") }
+                override fun onError(error: Int) {
+                    if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 650)
+                    else status("Speech recognition stopped. Tap the microphone and try again.")
+                }
                 override fun onResults(results: Bundle?) {
                     val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-                    status("You said: $heard")
-                    command(heard)
+                    if (wakeMode) {
+                        val lower = heard.lowercase(Locale.ROOT)
+                        if (lower.contains("jarvis")) {
+                            val afterWake = heard.substring(lower.indexOf("jarvis") + "jarvis".length).trim().trim(',', '.', ' ')
+                            if (afterWake.isNotBlank()) command(afterWake) else say("Yes, I'm listening.")
+                        } else {
+                            status("Heard: $heard — say “Jarvis” before your command.")
+                        }
+                        if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 700)
+                    } else {
+                        status("You said: $heard")
+                        command(heard)
+                    }
                 }
                 override fun onPartialResults(partialResults: Bundle?) {}
                 override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -86,11 +135,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "JARVIS is listening")
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, if (wakeMode) "Say Jarvis followed by a command" else "JARVIS is listening")
             }
             recognizer?.startListening(intent)
-        } catch (e: Exception) {
-            status("Could not start speech recognition.")
+        } catch (_: Exception) {
+            status("Could not start speech recognition. Check your speech service and microphone permission.")
         }
     }
 
@@ -99,47 +149,172 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
     }
 
-    private fun command(raw: String) {
-        val q = raw.trim()
-        val s = q.lowercase(Locale.ROOT)
-        when {
-            s.contains("time") || s.contains("date") -> say(java.text.DateFormat.getDateTimeInstance().format(java.util.Date()))
-            s.contains("wifi") || s.contains("wi-fi") -> { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)); say("Opening Wi-Fi settings.") }
-            s == "settings" || s.contains("open settings") -> { startActivity(Intent(Settings.ACTION_SETTINGS)); say("Opening settings.") }
-            s.contains("bluetooth") -> { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)); say("Opening Bluetooth settings.") }
-            s.contains("alarm") -> { startActivity(Intent(AlarmClock.ACTION_SHOW_ALARMS)); say("Opening alarms.") }
-            s.contains("open youtube") -> openApp("com.google.android.youtube", "YouTube")
-            s.contains("open whatsapp") -> openApp("com.whatsapp", "WhatsApp")
-            s.startsWith("search for ") || s.startsWith("google ") -> {
-                val query = q.substringAfter(' ')
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))))
-                say("Searching the web.")
-            }
-            s.startsWith("open website ") -> {
-                val url = q.substringAfter("open website ").trim()
-                val safeUrl = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(safeUrl)))
-                say("Opening website.")
-            }
-            else -> say("I heard: $q. That command is not supported yet.")
+    private fun safeLaunch(intent: Intent, successMessage: String) {
+        try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            say(successMessage)
+        } catch (_: Exception) {
+            say("That action is not available on this device.")
         }
+    }
+
+    private fun webSearch(query: String) {
+        safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))), "Searching the web for $query.")
     }
 
     private fun openApp(packageName: String, label: String) {
         val intent = packageManager.getLaunchIntentForPackage(packageName)
-        if (intent == null) say("$label is not installed.") else { startActivity(intent); say("Opening $label.") }
+        if (intent == null) say("$label is not installed.") else safeLaunch(intent, "Opening $label.")
+    }
+
+    private fun saveNote(note: String) {
+        val clean = note.trim().take(1500)
+        if (clean.isBlank()) { say("Tell me what note to save."); return }
+        val existing = prefs.getString("notes", "").orEmpty()
+        val updated = (existing.lines().filter { it.isNotBlank() } + "• $clean").takeLast(50).joinToString("\n")
+        prefs.edit().putString("notes", updated).apply()
+        say("Saved that note on this device.")
+    }
+
+    private fun remember(item: String) {
+        val clean = item.trim().take(500)
+        if (clean.isBlank()) { say("Tell me what you want me to remember."); return }
+        val existing = prefs.getString("memory", "").orEmpty()
+        val updated = (existing.lines().filter { it.isNotBlank() } + clean).takeLast(30).joinToString("\n")
+        prefs.edit().putString("memory", updated).apply()
+        say("I'll remember that on this device.")
+    }
+
+    private fun showMemory() {
+        val memory = prefs.getString("memory", "").orEmpty()
+        val notes = prefs.getString("notes", "").orEmpty()
+        val result = buildString {
+            append("Saved memory: ")
+            append(if (memory.isBlank()) "nothing saved yet" else memory.replace("\n", "; "))
+            append(". Notes: ")
+            append(if (notes.isBlank()) "no notes saved" else notes.replace("\n", "; "))
+        }
+        say(result.take(1800))
+    }
+
+    private fun deviceInfo() {
+        val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
+        val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val model = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL
+        val version = android.os.Build.VERSION.RELEASE
+        say("Device: $model. Android version $version. Battery $level percent.")
+    }
+
+    private fun makeReminder(title: String) {
+        val cleanTitle = title.trim().ifBlank { "JARVIS reminder" }.take(200)
+        val start = System.currentTimeMillis() + 60 * 60 * 1000L
+        val intent = Intent(Intent.ACTION_INSERT).setData(CalendarContract.Events.CONTENT_URI).apply {
+            putExtra(CalendarContract.Events.TITLE, cleanTitle)
+            putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, start)
+            putExtra(CalendarContract.EXTRA_EVENT_END_TIME, start + 30 * 60 * 1000L)
+        }
+        safeLaunch(intent, "Opening your calendar to create a reminder. Review and save it there.")
+    }
+
+    private fun musicAction(action: String) {
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        val key = when (action) {
+            "pause" -> KeyEvent.KEYCODE_MEDIA_PAUSE
+            "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
+            "previous" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            else -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+        }
+        try {
+            audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, key))
+            audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, key))
+            say("Sent the $action media command. Your music app may decide how to handle it.")
+        } catch (_: Exception) {
+            safeLaunch(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC), "Opening your music player.")
+        }
+    }
+
+    private fun command(raw: String) {
+        val q = raw.trim()
+        val s = q.lowercase(Locale.ROOT)
+        when {
+            q.isBlank() -> say("I didn't hear a command.")
+            s == "stop listening" || s == "stop wake word" || s == "stop wakeword" -> stopWakeSession()
+            s == "help" || s == "what can you do" -> say("I can open settings and apps, search the web, show weather and news, open the camera, control basic media keys, save notes and memory, create calendar reminders, and report battery and device details.")
+            s.contains("what time") || s == "time" || s.contains("what date") || s == "date" -> say(DateFormat.getDateTimeInstance().format(Date()))
+            s.startsWith("remember ") -> remember(q.substringAfter("remember ", ""))
+            s.startsWith("remember that ") -> remember(q.substringAfter("remember that ", ""))
+            s.startsWith("note ") || s.startsWith("save note ") || s.startsWith("take a note ") -> {
+                val note = q.substringAfter("note ", q.substringAfter("save note ", q.substringAfter("take a note ", "")))
+                saveNote(note)
+            }
+            s.contains("what do you remember") || s.contains("show my notes") || s.contains("read my notes") -> showMemory()
+            s.contains("battery") || s.contains("device info") || s.contains("phone information") -> deviceInfo()
+            s.contains("open camera") || s == "camera" || s.contains("take a photo") -> safeLaunch(Intent(MediaStore.ACTION_IMAGE_CAPTURE), "Opening the camera. Press the shutter in your camera app.")
+            s.contains("weather") -> webSearch("weather near me")
+            s.contains("news") -> safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse("https://news.google.com/")), "Opening the latest news.")
+            s.contains("open chatgpt") || s.startsWith("ask ai") || s.startsWith("ai chat") -> safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse("https://chatgpt.com/")), "Opening ChatGPT. AI chat is handled by that service, not locally inside JARVIS.")
+            s.startsWith("remind me to ") -> makeReminder(q.substringAfter("remind me to "))
+            s.startsWith("set alarm ") -> {
+                val match = Regex("(\\d{1,2})(?::(\\d{2}))?").find(s.substringAfter("set alarm "))
+                if (match != null) {
+                    val hour = match.groupValues[1].toIntOrNull() ?: 7
+                    val minute = match.groupValues[2].toIntOrNull() ?: 0
+                    if (hour in 0..23 && minute in 0..59) {
+                        safeLaunch(Intent(AlarmClock.ACTION_SET_ALARM).putExtra(AlarmClock.EXTRA_HOUR, hour).putExtra(AlarmClock.EXTRA_MINUTES, minute).putExtra(AlarmClock.EXTRA_SKIP_UI, false), "Opening the alarm confirmation screen.")
+                    } else say("Please give a valid time, like set alarm 7:30.")
+                } else safeLaunch(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Opening alarms.")
+            }
+            s.contains("alarm") -> safeLaunch(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Opening alarms.")
+            s.contains("pause music") || s == "pause" -> musicAction("pause")
+            s.contains("next song") || s.contains("next track") -> musicAction("next")
+            s.contains("previous song") || s.contains("previous track") -> musicAction("previous")
+            s.contains("play music") || s.contains("resume music") || s == "play" -> musicAction("play")
+            s.contains("music") || s.contains("open spotify") -> {
+                val music = packageManager.getLaunchIntentForPackage("com.spotify.music")
+                if (music != null) safeLaunch(music, "Opening Spotify.") else safeLaunch(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC), "Opening your music player.")
+            }
+            s.contains("wifi") || s.contains("wi-fi") -> safeLaunch(Intent(Settings.ACTION_WIFI_SETTINGS), "Opening Wi-Fi settings. Android requires you to change the connection there.")
+            s.contains("bluetooth") -> safeLaunch(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Opening Bluetooth settings.")
+            s.contains("location settings") || s.contains("gps") -> safeLaunch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS), "Opening location settings.")
+            s.contains("brightness") || s.contains("display settings") -> safeLaunch(Intent(Settings.ACTION_DISPLAY_SETTINGS), "Opening display settings.")
+            s.contains("volume settings") -> safeLaunch(Intent(Settings.ACTION_SOUND_SETTINGS), "Opening sound settings.")
+            s == "settings" || s.contains("open settings") -> safeLaunch(Intent(Settings.ACTION_SETTINGS), "Opening settings.")
+            s.contains("open youtube") -> openApp("com.google.android.youtube", "YouTube")
+            s.contains("open whatsapp") -> openApp("com.whatsapp", "WhatsApp")
+            s.contains("open phone") || s.contains("dialer") -> safeLaunch(Intent(Intent.ACTION_DIAL), "Opening the phone dialer. You choose whether to place the call.")
+            s.startsWith("search for ") || s.startsWith("google ") -> webSearch(q.substringAfter(' '))
+            s.startsWith("open website ") -> {
+                val url = q.substringAfter("open website ").trim()
+                val safeUrl = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"
+                safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse(safeUrl)), "Opening website.")
+            }
+            else -> say("I heard: $q. Try saying help to hear supported commands.")
+        }
     }
 
     inner class Bridge {
         @JavascriptInterface fun startListening() = listen()
+        @JavascriptInterface fun startWakeWord() = startWakeSession()
+        @JavascriptInterface fun stopWakeWord() = stopWakeSession()
         @JavascriptInterface fun setLanguage(code: String) {
             lang = when (code.uppercase(Locale.ROOT)) { "HI" -> "hi-IN"; "BN" -> "bn-IN"; else -> "en-IN" }
             tts?.language = when (code.uppercase(Locale.ROOT)) { "HI" -> Locale("hi", "IN"); "BN" -> Locale("bn", "IN"); else -> Locale.US }
         }
         @JavascriptInterface fun speak(text: String) = say(text)
+        @JavascriptInterface fun saveNote(text: String) = saveNote(text)
+        @JavascriptInterface fun remember(text: String) = remember(text)
+        @JavascriptInterface fun showMemory() = showMemory()
+        @JavascriptInterface fun askAI(text: String) {
+            status("Opening ChatGPT in your browser. For built-in AI chat, configure a secure backend endpoint and API key outside the APK.")
+            safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse("https://chatgpt.com/")), "Opening ChatGPT.")
+        }
+        @JavascriptInterface fun runCommand(text: String) = command(text)
     }
 
     override fun onDestroy() {
+        wakeMode = false
+        handler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         tts?.stop()
         tts?.shutdown()
