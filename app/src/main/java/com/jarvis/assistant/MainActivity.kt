@@ -187,6 +187,44 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         if (intent == null) say("$label is not installed.") else safeLaunch(intent, "Opening $label.")
     }
 
+    private fun openInstalledAppByName(rawName: String) {
+        val query = rawName.trim().removeSuffix(" app").removeSuffix(" application").trim()
+        if (query.isBlank()) {
+            say("Tell me the app name, for example: open app Calculator.")
+            return
+        }
+        try {
+            val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val apps = packageManager.queryIntentActivities(launcherIntent, 0)
+                .map { info -> info.activityInfo.packageName to info.loadLabel(packageManager).toString() }
+                .distinctBy { it.first }
+            val normalized = query.lowercase(Locale.ROOT)
+            val exact = apps.filter { it.second.equals(query, ignoreCase = true) }
+            val starts = apps.filter { it.second.startsWith(query, ignoreCase = true) }
+            val contains = apps.filter { it.second.contains(query, ignoreCase = true) }
+            val matches = when {
+                exact.isNotEmpty() -> exact
+                starts.isNotEmpty() -> starts
+                else -> contains
+            }
+            if (matches.isEmpty()) {
+                say("I couldn't find an installed app named $query.")
+                return
+            }
+            if (matches.size > 1) {
+                val names = matches.take(4).joinToString(", ") { it.second }
+                say("I found several matching apps: $names. Say the full app name.")
+                return
+            }
+            val (packageName, label) = matches.first()
+            val launch = packageManager.getLaunchIntentForPackage(packageName)
+            if (launch == null) say("$label does not expose a launch screen.")
+            else safeLaunch(launch, "Opening $label.")
+        } catch (_: Exception) {
+            say("Android could not find or launch that app.")
+        }
+    }
+
     private fun openAppAndSearch(packageName: String, label: String, query: String) {
         if (query.isBlank()) { openApp(packageName, label); return }
         if (!JarvisAccessibilityService.isEnabled()) {
@@ -323,7 +361,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         when {
             q.isBlank() -> say("I didn't hear a command.")
             s == "stop listening" || s == "stop wake word" || s == "stop wakeword" -> stopWakeSession()
-            s == "help" || s == "what can you do" || s == "madad" || s.contains("kya kar sakte ho") || s.contains("क्या कर सकते हो") || s.contains("मदद") -> say(if (lang == "hi-IN") "मैं ऐप्स और सेटिंग्स खोल सकता हूँ, वेब खोज सकता हूँ, मौसम और समाचार दिखा सकता हूँ, कैमरा खोल सकता हूँ, संगीत नियंत्रित कर सकता हूँ, नोट्स और यादें सहेज सकता हूँ, रिमाइंडर बना सकता हूँ और बैटरी की जानकारी बता सकता हूँ।" else "I can open settings and apps, search the web, show weather and news, open the camera, control basic media keys, save notes and memory, create calendar reminders, and report battery and device details.")
+            s == "help" || s == "what can you do" || s == "madad" || s.contains("kya kar sakte ho") || s.contains("क्या कर सकते हो") || s.contains("मदद") -> say(if (lang == "hi-IN") "मैं ऐप्स और सेटिंग्स खोल सकता हूँ, वेब खोज सकता हूँ, मौसम और समाचार दिखा सकता हूँ, कैमरा खोल सकता हूँ, संगीत नियंत्रित कर सकता हूँ, नोट्स और यादें सहेज सकता हूँ, रिमाइंडर बना सकता हूँ और बैटरी की जानकारी बता सकता हूँ।" else "I can open installed apps by name, use supported accessibility actions like tap, type, scroll and back, open settings, search the web, show weather and news, control basic media keys, save notes, create reminders, and report device details.")
             s.contains("what time") || s == "time" || s.contains("what date") || s == "date" || s.contains("kitne baje") || s.contains("samay batao") || s.contains("time batao") || s.contains("tareekh batao") || s.contains("कितने बजे") || s.contains("समय बताओ") || s.contains("तारीख बताओ") -> say((if (lang == "hi-IN") "अभी तारीख और समय है: " else "The date and time is: ") + DateFormat.getDateTimeInstance().format(Date()))
             s.startsWith("remember ") -> remember(q.substringAfter("remember ", ""))
             s.startsWith("remember that ") -> remember(q.substringAfter("remember that ", ""))
@@ -421,7 +459,13 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 val safeUrl = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"
                 safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse(safeUrl)), "Opening website.")
             }
-            else -> say("I heard: $q. Try saying help to hear supported commands.")
+            s.startsWith("open app ") -> openInstalledAppByName(q.substringAfter("open app "))
+            s.startsWith("launch app ") -> openInstalledAppByName(q.substringAfter("launch app "))
+            s.startsWith("open ") -> openInstalledAppByName(q.substringAfter("open "))
+            s.startsWith("launch ") -> openInstalledAppByName(q.substringAfter("launch "))
+            s.endsWith(" kholo") -> openInstalledAppByName(q.dropLast(" kholo".length))
+            s.endsWith(" खोलो") -> openInstalledAppByName(q.dropLast(" खोलो".length))
+            else -> say("I heard: $q. Try: open app Calculator, then use tap, type, scroll, or back commands. App control depends on Android and the app's accessibility support.")
         }
     }
 
