@@ -1021,6 +1021,37 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun exportLocalBackup() {
+        runOnUiThread {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Export JARVIS local data?")
+                .setMessage("This backup contains your saved tasks, notes, and memories. It does not include your Gemini API key. Choose a trusted destination when sharing.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Continue") { _, _ ->
+                    try {
+                        val backup = JSONObject()
+                            .put("format", "jarvis-local-backup")
+                            .put("version", 1)
+                            .put("exportedAt", DateFormat.getDateTimeInstance().format(Date()))
+                            .put("language", lang)
+                            .put("tasks", JSONArray(prefs.getString("tasks", "").orEmpty().lines().filter { it.isNotBlank() }))
+                            .put("notes", JSONArray(prefs.getString("notes", "").orEmpty().lines().filter { it.isNotBlank() }))
+                            .put("memory", JSONArray(prefs.getString("memory", "").orEmpty().lines().filter { it.isNotBlank() }))
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/json"
+                            putExtra(Intent.EXTRA_SUBJECT, "JARVIS local data backup")
+                            putExtra(Intent.EXTRA_TEXT, backup.toString(2))
+                        }
+                        startActivity(Intent.createChooser(send, "Export JARVIS backup"))
+                        say("Backup prepared. Choose a trusted app or location to save it.")
+                    } catch (_: Exception) {
+                        say("Could not prepare the backup on this device.")
+                    }
+                }
+                .show()
+        }
+    }
+
     private fun deviceStatusJson(): String {
         val batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager
         val battery = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -1041,6 +1072,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     inner class Bridge {
+        @JavascriptInterface fun exportLocalBackup() = this@MainActivity.exportLocalBackup()
         @JavascriptInterface fun getDeviceStatus(): String = deviceStatusJson()
         @JavascriptInterface fun startListening() = listen()
         @JavascriptInterface fun startWakeWord() = startWakeSession()
