@@ -31,12 +31,20 @@ import androidx.core.content.ContextCompat
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private lateinit var web: WebView
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var lang = "en-IN"
+    @Volatile private var geminiApiKey = ""
+    private val aiExecutor = Executors.newSingleThreadExecutor()
+    @Volatile private var suppressCommandSpeech = false
     private var wakeMode = false
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("jarvis_local_memory", MODE_PRIVATE) }
@@ -64,6 +72,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lang = prefs.getString("language", "en-IN") ?: "en-IN"
+        geminiApiKey = prefs.getString("gemini_api_key", "").orEmpty()
         tts = TextToSpeech(this, this)
         web = WebView(this)
         web.settings.javaScriptEnabled = true
@@ -78,7 +88,18 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onInit(statusCode: Int) {
-        if (statusCode == TextToSpeech.SUCCESS) tts?.language = Locale.US
+        if (statusCode == TextToSpeech.SUCCESS) setTtsLanguageForText("")
+    }
+
+    private fun setTtsLanguageForText(text: String) {
+        val locale = when {
+            Regex("[\\u0980-\\u09FF]").containsMatchIn(text) -> Locale("bn", "IN")
+            Regex("[\\u0900-\\u097F]").containsMatchIn(text) -> Locale("hi", "IN")
+            lang == "hi-IN" -> Locale("hi", "IN")
+            lang == "bn-IN" -> Locale("bn", "IN")
+            else -> Locale("en", "IN")
+        }
+        try { tts?.language = locale } catch (_: Exception) { tts?.language = Locale.US }
     }
 
     private fun status(text: String) {
@@ -115,7 +136,10 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun listenNow() {
-        if (!wakeMode && !SpeechRecognizer.isRecognitionAvailable(this)) return
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            status("Speech recognition is unavailable. Enable or install an Android speech recognition service.")
+            return
+        }
         try {
             recognizer?.destroy()
             recognizer = SpeechRecognizer.createSpeechRecognizer(this)
@@ -165,6 +189,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun say(text: String) {
         status(text)
+        if (suppressCommandSpeech) return
+        setTtsLanguageForText(text)
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
     }
 
@@ -478,6 +504,15 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun command(raw: String) {
+        val normalized = raw.trim().lowercase(Locale.ROOT)
+        if (geminiApiKey.isNotBlank() && normalized !in listOf("stop listening", "stop wake word", "stop wakeword")) {
+            askGeminiAgent(raw)
+        } else {
+            executeCommand(raw)
+        }
+    }
+
+    private fun executeCommand(raw: String) {
         val q = raw.trim()
         val s = q.lowercase(Locale.ROOT)
         when {
@@ -598,15 +633,18 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         @JavascriptInterface fun stopWakeWord() = stopWakeSession()
         @JavascriptInterface fun setLanguage(code: String) {
             lang = when (code.uppercase(Locale.ROOT)) { "HI" -> "hi-IN"; "BN" -> "bn-IN"; else -> "en-IN" }
-            tts?.language = when (code.uppercase(Locale.ROOT)) { "HI" -> Locale("hi", "IN"); "BN" -> Locale("bn", "IN"); else -> Locale.US }
+            prefs.edit().putString("language", lang).apply()
+            setTtsLanguageForText("")
+            status("Language set to " + when (lang) { "hi-IN" -> "Hindi"; "bn-IN" -> "Bengali"; else -> "English" })
         }
+        @JavascriptInterface fun configureGemini(key: String) = configureGeminiKey(key)
         @JavascriptInterface fun speak(text: String) = say(text)
         @JavascriptInterface fun saveNote(text: String) = this@MainActivity.saveNote(text)
         @JavascriptInterface fun remember(text: String) = this@MainActivity.remember(text)
         @JavascriptInterface fun showMemory() = this@MainActivity.showMemory()
         @JavascriptInterface fun askAI(text: String) {
-            status("Opening ChatGPT in your browser. For built-in AI chat, configure a secure backend endpoint and API key outside the APK.")
-            safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse("https://chatgpt.com/")), "Opening ChatGPT.")
+            if (geminiApiKey.isBlank()) status("Add your Gemini API key in the AI section first, then tap Save API key.")
+            else askGeminiAgent(text)
         }
         @JavascriptInterface fun runCommand(text: String) = command(text)
     }
