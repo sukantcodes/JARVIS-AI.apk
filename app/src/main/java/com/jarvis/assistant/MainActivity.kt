@@ -180,8 +180,28 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() { if (!wakeMode) status("Processing…") }
                 override fun onError(error: Int) {
-                    if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 1100)
-                    else status("Speech recognition stopped. Tap the microphone and try again.")
+                    val detail = when (error) {
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "network timeout"
+                        SpeechRecognizer.ERROR_NETWORK -> "network/service connection"
+                        SpeechRecognizer.ERROR_AUDIO -> "audio recording"
+                        SpeechRecognizer.ERROR_SERVER -> "recognition server"
+                        SpeechRecognizer.ERROR_CLIENT -> "recognition client"
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "no speech detected"
+                        SpeechRecognizer.ERROR_NO_MATCH -> "speech not understood"
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "recognizer busy"
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "microphone permission"
+                        SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "too many requests"
+                        SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "recognition service disconnected"
+                        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "language not supported"
+                        SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "language unavailable"
+                        else -> "unknown recognition error"
+                    }
+                    if (wakeMode) {
+                        status("Voice recognition issue: $detail (code $error). Retrying…")
+                        handler.postDelayed({ if (wakeMode) listenNow() }, 1100)
+                    } else {
+                        status("Voice recognition failed: $detail (code $error). Try switching JARVIS language to English, then test again.")
+                    }
                 }
                 override fun onResults(results: Bundle?) {
                     val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
@@ -220,8 +240,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 putExtra(RecognizerIntent.EXTRA_PROMPT, if (wakeMode) "Say Jarvis followed by a command" else "JARVIS is listening")
             }
             recognizer?.startListening(intent)
-        } catch (_: Exception) {
-            status("Could not start speech recognition. Check your speech service and microphone permission.")
+        } catch (e: Exception) {
+            val reason = (e.message ?: e.javaClass.simpleName).take(120)
+            status("Could not start speech recognition: ${e.javaClass.simpleName}: $reason")
         }
     }
 
