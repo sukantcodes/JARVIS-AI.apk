@@ -7,7 +7,10 @@ Kotlin/WebView Android voice-assistant starter with an animated sci-fi interface
 - English, Hindi and Bengali language selection, plus Hindi/Hinglish command aliases for navigation, camera, battery info, weather/news, notes/memory, reminders, media playback, Wi-Fi/Bluetooth settings, YouTube and WhatsApp.
 - Wake-word matching accepts “Jarvis” and “जार्विस”; Hindi recognition quality depends on the Android speech service and installed language support.
 - Explicit foreground wake-word session: say “Jarvis” followed by a command; tap Stop to end. This is repeated Android speech recognition, not a low-power offline hotword engine, and is not designed to run while the app is closed.
-- Local commands for date/time, settings shortcuts, alarms, camera launch, phone dialer, opening YouTube/WhatsApp, web search, weather search and Google News.
+- Local commands for date/time, settings shortcuts, alarms, camera launch, phone dialer, opening YouTube/WhatsApp/Instagram, web search, weather search and Google News.
+- Optional accessibility-assisted search entry for Instagram and WhatsApp: commands such as “Instagram search username” and “WhatsApp search contact” open the app and attempt to focus Search and enter the query. The user must verify results and open the correct profile/chat.
+- Accessibility-assisted typing into the currently focused editable field with “type your message”, and a separate explicit “send message” command. UI labels and layouts vary by app/version; the send action may fail or target a different visible Send control, so inspect the chat before using it.
+- Explicit photo/video sharing flow for WhatsApp or Instagram using Android's media picker and share intent. JARVIS only receives the single item the user picks; the user must choose/review the destination and complete the send/post action in the target app.
 - Media play/pause/next/previous key dispatch (behavior depends on the active media app).
 - Local notes and memory stored in app-private SharedPreferences.
 - Battery percentage and basic device/Android version details.
@@ -28,7 +31,7 @@ The AI-chat button currently opens ChatGPT in the browser. A real in-app AI conv
 - Accessibility access is optional and powerful. It can act on visible UI and may expose visible screen content to the service. Enable it only if you understand and trust this app. The service responds to explicit commands and does not log screen content.
 - Android prevents ordinary apps and accessibility services from unlocking a secure device by programmatically entering the owner's lock credential. JARVIS does not request, store, or type that credential. Unlock using the system's PIN, password, pattern, or biometrics. JARVIS can request a lock action on supported Android versions.
 - Even with accessibility enabled, JARVIS cannot control every device function, silently toggle every radio, access private data from other apps, or operate invisibly. Some screens block automation and some actions require confirmation. The wake-word session must be explicitly started and kept in the foreground; Android restricts background microphone use.
-- This baseline does not request contacts, call-log, SMS, device-admin, location, or broad file permissions.
+- This baseline does not request contacts, call-log, SMS, device-admin, location, or broad file permissions. Photo/video sharing uses Android's system content picker rather than scanning the full gallery.
 
 ## Build APK
 Open **Actions → Build JARVIS AI APK** and run the workflow, or push a commit to `main`. After success, download the `JARVIS-AI-debug-APK` artifact from the workflow run and extract `app-debug.apk`. Compilation and real-device behavior still need to be verified in GitHub Actions and on an Android phone.
