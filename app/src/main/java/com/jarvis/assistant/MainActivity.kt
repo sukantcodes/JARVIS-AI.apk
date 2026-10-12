@@ -3,6 +3,7 @@ package com.jarvis.assistant
 import android.Manifest
 import android.app.AlarmManager
 import android.content.Intent
+import android.content.ClipData
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.AudioManager.STREAM_MUSIC
@@ -39,6 +40,23 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var wakeMode = false
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("jarvis_local_memory", MODE_PRIVATE) }
+    private var pendingSharePackage: String? = null
+    private var pendingShareLabel: String = "the selected app"
+
+    private val pickPhoto = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) {
+            say("No photo selected.")
+        } else {
+            shareSelectedMedia(uri, "image/*")
+        }
+    }
+    private val pickVideo = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) {
+            say("No video selected.")
+        } else {
+            shareSelectedMedia(uri, "video/*")
+        }
+    }
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) listenNow() else status("Microphone permission denied. Voice features need microphone access.")
@@ -167,6 +185,60 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private fun openApp(packageName: String, label: String) {
         val intent = packageManager.getLaunchIntentForPackage(packageName)
         if (intent == null) say("$label is not installed.") else safeLaunch(intent, "Opening $label.")
+    }
+
+    private fun openAppAndSearch(packageName: String, label: String, query: String) {
+        if (query.isBlank()) { openApp(packageName, label); return }
+        if (!JarvisAccessibilityService.isEnabled()) {
+            say("To search inside $label by voice, enable JARVIS Accessibility only if you trust this app. I'll open $label now.")
+            openApp(packageName, label)
+            safeLaunch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "Enable JARVIS in Accessibility settings, then return to the app.")
+            return
+        }
+        val intent = packageManager.getLaunchIntentForPackage(packageName)
+        if (intent == null) { say("$label is not installed."); return }
+        safeLaunch(intent, "Opening $label to search for $query.")
+        handler.postDelayed({
+            if (JarvisAccessibilityService.runAction("tap search")) {
+                handler.postDelayed({
+                    if (JarvisAccessibilityService.runAction("type $query")) {
+                        say("Search text entered: $query. Review the results and choose the correct account or chat.")
+                    } else say("I opened search, but couldn't type the query. Tap the search field and say: type $query.")
+                }, 500)
+            } else say("$label is open. Tap its Search control, then say: type $query.")
+        }, 1000)
+    }
+
+    private fun chooseMedia(kind: String, target: String) {
+        pendingSharePackage = when (target) {
+            "whatsapp" -> "com.whatsapp"
+            "instagram" -> "com.instagram.android"
+            else -> null
+        }
+        pendingShareLabel = target
+        when (kind) {
+            "photo" -> {
+                say("Choose the photo you want to share. JARVIS won't scan your whole gallery.")
+                pickPhoto.launch("image/*")
+            }
+            else -> {
+                say("Choose the video you want to share. JARVIS won't scan your whole gallery.")
+                pickVideo.launch("video/*")
+            }
+        }
+    }
+
+    private fun shareSelectedMedia(uri: Uri, mimeType: String) {
+        val target = pendingSharePackage
+        val label = pendingShareLabel
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(contentResolver, "JARVIS selected media", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (target != null) setPackage(target)
+        }
+        safeLaunch(Intent.createChooser(send, "Choose where to share with $label"), "Media selected. Choose the destination or chat in $label and review it before sending.")
     }
 
     private fun saveNote(note: String) {
@@ -316,8 +388,30 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             s.contains("brightness") || s.contains("display settings") -> safeLaunch(Intent(Settings.ACTION_DISPLAY_SETTINGS), "Opening display settings.")
             s.contains("volume settings") -> safeLaunch(Intent(Settings.ACTION_SOUND_SETTINGS), "Opening sound settings.")
             s == "settings" || s.contains("open settings") || s.contains("settings kholo") || s.contains("सेटिंग्स खोलो") -> safeLaunch(Intent(Settings.ACTION_SETTINGS), if (lang == "hi-IN") "सेटिंग्स खोल रहा हूँ।" else "Opening settings.")
+            s.startsWith("whatsapp search ") || s.startsWith("search whatsapp for ") -> {
+                val term = if (s.startsWith("whatsapp search ")) q.substringAfter("whatsapp search ") else q.substringAfter("search whatsapp for ")
+                openAppAndSearch("com.whatsapp", "WhatsApp", term)
+            }
+            s.startsWith("instagram search ") || s.startsWith("search instagram for ") -> {
+                val term = if (s.startsWith("instagram search ")) q.substringAfter("instagram search ") else q.substringAfter("search instagram for ")
+                openAppAndSearch("com.instagram.android", "Instagram", term)
+            }
+            s.contains("share photo on whatsapp") || s.contains("send photo on whatsapp") || s.contains("फोटो व्हाट्सएप पर भेजो") -> chooseMedia("photo", "whatsapp")
+            s.contains("share video on whatsapp") || s.contains("send video on whatsapp") || s.contains("वीडियो व्हाट्सएप पर भेजो") -> chooseMedia("video", "whatsapp")
+            s.contains("share photo on instagram") || s.contains("send photo on instagram") || s.contains("फोटो इंस्टाग्राम पर भेजो") -> chooseMedia("photo", "instagram")
+            s.contains("share video on instagram") || s.contains("send video on instagram") || s.contains("वीडियो इंस्टाग्राम पर भेजो") -> chooseMedia("video", "instagram")
+            s == "share photo" || s == "send photo" || s == "फोटो भेजो" -> chooseMedia("photo", "an app you choose")
+            s == "share video" || s == "send video" || s == "वीडियो भेजो" -> chooseMedia("video", "an app you choose")
+            s.startsWith("type ") -> accessibilityAction(q)
+            s == "send message" || s == "message bhejo" || s == "संदेश भेजो" || s == "मैसेज भेजो" -> {
+                if (!JarvisAccessibilityService.isEnabled()) say("Enable JARVIS Accessibility only if you trust it. I can't press Send without that permission.")
+                else if (JarvisAccessibilityService.runAction("send message")) say("Send action requested. Check the chat to confirm the message was sent.")
+                else say("I couldn't find a Send control. Review the message and send it manually.")
+            }
+            s.contains("open instagram") || s.contains("instagram kholo") || s.contains("इंस्टाग्राम खोलो") -> openApp("com.instagram.android", "Instagram")
             s.contains("open youtube") || s.contains("youtube kholo") || s.contains("यूट्यूब खोलो") -> openApp("com.google.android.youtube", "YouTube")
             s.contains("open whatsapp") || s.contains("whatsapp kholo") || s.contains("व्हाट्सएप खोलो") -> openApp("com.whatsapp", "WhatsApp")
+            s.contains("open gallery") || s.contains("open photos") || s.contains("gallery kholo") || s.contains("गैलरी खोलो") || s.contains("फोटो गैलरी खोलो") -> safeLaunch(Intent(Intent.ACTION_VIEW).setType("image/*"), "Opening available photo apps.")
             s.contains("open phone") || s.contains("dialer") -> safeLaunch(Intent(Intent.ACTION_DIAL), "Opening the phone dialer. You choose whether to place the call.")
             s.startsWith("search for ") || s.startsWith("google ") -> webSearch(q.substringAfter(' '))
             s.startsWith("google par ") -> webSearch(q.substringAfter("google par "))
