@@ -14,6 +14,8 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.CalendarContract
+import android.provider.ContactsContract
+import android.telecom.TelecomManager
 import android.provider.MediaStore
 import android.provider.Settings
 import android.speech.RecognitionListener
@@ -51,6 +53,11 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private val prefs by lazy { getSharedPreferences("jarvis_local_memory", MODE_PRIVATE) }
     private var pendingSharePackage: String? = null
     private var pendingShareLabel: String = "the selected app"
+    private var pendingContactQuery = ""
+    private var pendingCallName = ""
+    private var pendingCallNumber: String? = null
+    private var lastContactResults: List<ContactMatch> = emptyList()
+    private data class ContactMatch(val name: String, val number: String)
 
     private val pickPhoto = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) {
@@ -69,6 +76,17 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) listenNow() else status("Microphone permission denied. Voice features need microphone access.")
+    }
+
+    private val contactsPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val query = pendingContactQuery
+        if (granted && query.isNotBlank()) findAndConfirmContact(query)
+        else if (granted) status("Contacts access granted. Say “Call [contact name]” or search in the Contacts & Calling panel.")
+        else say("Contacts permission was denied. Allow Contacts access in Android app settings to call saved contacts.")
+    }
+    private val callPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) placePendingCall()
+        else say("Call permission was denied. No call was placed.")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -319,6 +337,160 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         safeLaunch(Intent.createChooser(send, "Choose where to share with $label"), "Media selected. Choose the destination or chat in $label and review it before sending.")
     }
 
+    private fun requestContactsAccess() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            status("Contacts access is already enabled.")
+        } else {
+            pendingContactQuery = ""
+            contactsPermission.launch(Manifest.permission.READ_CONTACTS)
+        }
+    }
+
+    private fun extractCallName(raw: String): String? {
+        val input = raw.trim()
+        val patterns = listOf(
+            Regex("(?i)^(?:please\\s+)?(?:call|phone|dial)\\s+(?:contact\\s+)?(.+?)\\s*$"),
+            Regex("(?i)^(.+?)\\s+ko\\s+call\\s+(?:karo|kar do|karna|please)?$"),
+            Regex("(?i)^(.+?)\\s+ko\\s+phone\\s+(?:karo|kar do)$"),
+            Regex("^(.+?)\\s+को\\s+(?:कॉल|फोन)\\s+करो$"),
+            Regex("^(?:कॉल|फोन)\\s+करो\\s+(.+)$")
+        )
+        val captured = patterns.firstNotNullOfOrNull { it.find(input)?.groupValues?.getOrNull(1) } ?: return null
+        val name = captured.trim().removeSuffix(" please").removePrefix("my ").removePrefix("the ").trim()
+        if (name.isBlank() || name.lowercase(Locale.ROOT) in setOf("me", "myself", "someone", "a person")) return null
+        return name
+    }
+
+    private fun isConfirmCallCommand(s: String): Boolean =
+        s in setOf("confirm call", "call confirm", "yes", "yes call", "haan", "haan call karo", "हाँ", "हाँ कॉल करो", "कॉल पक्का करो", "पुष्टि करो")
+
+    private fun isCancelCallCommand(s: String): Boolean =
+        s in setOf("cancel call", "don't call", "do not call", "no", "no call", "nahi", "nahi call karo", "नहीं", "कॉल रद्द करो", "रहने दो")
+
+    private fun publishContactResults(matches: List<ContactMatch>) {
+        val array = JSONArray()
+        matches.take(30).forEach { match ->
+            val digits = match.number.filter { it.isDigit() }
+            array.put(JSONObject().put("name", match.name).put("number", match.number).put("last4", digits.takeLast(4)))
+        }
+        val safeJson = JSONObject.quote(array.toString())
+        runOnUiThread {
+            if (::web.isInitialized) web.evaluateJavascript("window.renderContacts && renderContacts($safeJson)", null)
+        }
+    }
+
+    private fun findAndConfirmContact(rawName: String) {
+        val query = rawName.trim()
+        if (query.isBlank()) {
+            say("Tell me the contact name, for example: call Rahul.")
+            return
+        }
+        pendingContactQuery = query
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            status("JARVIS needs Contacts permission to look up $query.")
+            contactsPermission.launch(Manifest.permission.READ_CONTACTS)
+            return
+        }
+        pendingContactQuery = ""
+        val safeQuery = query.replace("%", "").replace("_", "").trim()
+        val found = mutableListOf<ContactMatch>()
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+        try {
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                projection,
+                "\${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+                arrayOf("%$safeQuery%"),
+                "\${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} COLLATE NOCASE ASC"
+            )?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                while (cursor.moveToNext()) {
+                    val name = if (nameIndex >= 0) cursor.getString(nameIndex).orEmpty() else ""
+                    val number = if (numberIndex >= 0) cursor.getString(numberIndex).orEmpty() else ""
+                    if (name.isNotBlank() && number.isNotBlank()) found.add(ContactMatch(name, number))
+                }
+            }
+        } catch (_: SecurityException) {
+            say("Android blocked contact access. Check the Contacts permission in app settings.")
+            return
+        } catch (_: Exception) {
+            say("I couldn't read contacts on this device.")
+            return
+        }
+        val unique = found.distinctBy { it.name.lowercase(Locale.ROOT) + "|" + it.number.filter { ch -> ch.isDigit() } }
+        val exact = unique.filter { it.name.equals(safeQuery, ignoreCase = true) }
+        val starts = unique.filter { it.name.startsWith(safeQuery, ignoreCase = true) }
+        val candidates = when {
+            exact.isNotEmpty() -> exact
+            starts.isNotEmpty() -> starts
+            else -> unique
+        }
+        lastContactResults = candidates
+        publishContactResults(candidates)
+        when {
+            candidates.isEmpty() -> say("I couldn't find a saved contact matching $query. Check the spelling or search in the Contacts & Calling panel.")
+            candidates.size == 1 -> prepareCallConfirmation(candidates.first())
+            else -> {
+                val preview = candidates.take(3).joinToString("; ") {
+                    "\${it.name}, number ending \${it.number.filter { ch -> ch.isDigit() }.takeLast(4)}"
+                }
+                say("I found several matches: $preview. Choose the correct number in the Contacts & Calling panel, or say the person's full name.")
+            }
+        }
+    }
+
+    private fun prepareCallConfirmation(match: ContactMatch) {
+        pendingCallName = match.name
+        pendingCallNumber = match.number
+        val last4 = match.number.filter { it.isDigit() }.takeLast(4)
+        say("I found \${match.name}, number ending $last4. Say confirm call to place the call with speakerphone requested, or say cancel call.")
+    }
+
+    private fun confirmContactCall(name: String, number: String) {
+        val match = lastContactResults.firstOrNull { it.name == name && it.number == number }
+        if (match == null) {
+            say("Please search for the contact again before selecting a number.")
+            return
+        }
+        prepareCallConfirmation(match)
+    }
+
+    private fun cancelPendingCall() {
+        pendingCallName = ""
+        pendingCallNumber = null
+        say("Call cancelled. No call was placed.")
+    }
+
+    private fun placePendingCall() {
+        val number = pendingCallNumber
+        val name = pendingCallName
+        if (number.isNullOrBlank() || name.isBlank()) {
+            say("There is no call waiting for confirmation.")
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+            status("Android needs Call permission to place this call after your confirmation.")
+            callPermission.launch(Manifest.permission.CALL_PHONE)
+            return
+        }
+        val intent = Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null))
+            .putExtra(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
+        pendingCallNumber = null
+        pendingCallName = ""
+        try {
+            startActivity(intent)
+            say("Calling $name. Speakerphone has been requested; your phone's dialer and Android version determine whether it activates automatically.")
+        } catch (_: SecurityException) {
+            say("Android blocked the call. Check the Call permission in app settings.")
+        } catch (_: Exception) {
+            say("I couldn't place the call on this device.")
+        }
+    }
+
     private fun saveNote(note: String) {
         val clean = note.trim().take(1500)
         if (clean.isBlank()) { say("Tell me what note to save."); return }
@@ -442,7 +614,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     whatsapp search CONTACT; instagram search ACCOUNT; share photo on whatsapp;
                     share video on whatsapp; share photo on instagram; share video on instagram;
                     remember TEXT; note TEXT; show my notes; remind me to TEXT; set alarm TIME;
-                    device info; what time; help.
+                    device info; what time; help; call CONTACT.
                     For a request to launch an installed app, use "open app APPNAME".
                     If the task needs an unsupported capability, say so honestly in reply and use action "reply".
                     If details are missing, use "clarify" and ask one short question in reply.
@@ -519,7 +691,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun command(raw: String) {
         val normalized = raw.trim().lowercase(Locale.ROOT)
-        if (geminiApiKey.isNotBlank() && normalized !in listOf("stop listening", "stop wake word", "stop wakeword")) {
+        val callCommand = extractCallName(raw) != null || (pendingCallNumber != null && (isConfirmCallCommand(normalized) || isCancelCallCommand(normalized)))
+        if (geminiApiKey.isNotBlank() && !callCommand && normalized !in listOf("stop listening", "stop wake word", "stop wakeword")) {
             askGeminiAgent(raw)
         } else {
             executeCommand(raw)
@@ -532,6 +705,10 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         when {
             q.isBlank() -> say("I didn't hear a command.")
             s == "stop listening" || s == "stop wake word" || s == "stop wakeword" -> stopWakeSession()
+            pendingCallNumber != null && isCancelCallCommand(s) -> cancelPendingCall()
+            pendingCallNumber != null && isConfirmCallCommand(s) -> placePendingCall()
+            extractCallName(q) != null -> findAndConfirmContact(extractCallName(q).orEmpty())
+            s == "contacts access" || s == "grant contacts access" || s == "contacts permission" -> requestContactsAccess()
             s == "help" || s == "what can you do" || s == "madad" || s.contains("kya kar sakte ho") || s.contains("क्या कर सकते हो") || s.contains("मदद") -> say(if (lang == "hi-IN") "मैं ऐप्स और सेटिंग्स खोल सकता हूँ, वेब खोज सकता हूँ, मौसम और समाचार दिखा सकता हूँ, कैमरा खोल सकता हूँ, संगीत नियंत्रित कर सकता हूँ, नोट्स और यादें सहेज सकता हूँ, रिमाइंडर बना सकता हूँ और बैटरी की जानकारी बता सकता हूँ।" else "I can open installed apps by name, use supported accessibility actions like tap, type, scroll and back, open settings, search the web, show weather and news, control basic media keys, save notes, create reminders, and report device details.")
             s.contains("what time") || s == "time" || s.contains("what date") || s == "date" || s.contains("kitne baje") || s.contains("samay batao") || s.contains("time batao") || s.contains("tareekh batao") || s.contains("कितने बजे") || s.contains("समय बताओ") || s.contains("तारीख बताओ") -> say((if (lang == "hi-IN") "अभी तारीख और समय है: " else "The date and time is: ") + DateFormat.getDateTimeInstance().format(Date()))
             s.startsWith("remember ") -> remember(q.substringAfter("remember ", ""))
@@ -652,6 +829,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             status("Language set to " + when (lang) { "hi-IN" -> "Hindi"; "bn-IN" -> "Bengali"; else -> "English" })
         }
         @JavascriptInterface fun configureGemini(key: String) = configureGeminiKey(key)
+        @JavascriptInterface fun requestContactsAccess() = this@MainActivity.requestContactsAccess()
+        @JavascriptInterface fun findContact(name: String) = findAndConfirmContact(name)
+        @JavascriptInterface fun confirmContactCall(name: String, number: String) = this@MainActivity.confirmContactCall(name, number)
         @JavascriptInterface fun speak(text: String) = say(text)
         @JavascriptInterface fun saveNote(text: String) = this@MainActivity.saveNote(text)
         @JavascriptInterface fun remember(text: String) = this@MainActivity.remember(text)
