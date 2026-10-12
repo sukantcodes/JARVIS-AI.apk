@@ -32,6 +32,19 @@ jobs:
           gradle-version: '8.9'
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.9
+      - name: Validate embedded dashboard JavaScript
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("app/src/main/assets/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script(?:\\s[^>]*)?>(.*?)</script>", html, re.S | re.I)
+          if not scripts:
+              raise SystemExit("No inline JavaScript found in dashboard")
+          Path("/tmp/jarvis-dashboard.js").write_text("\\n".join(scripts), encoding="utf-8")
+          print(f"Extracted {len(scripts)} inline script block(s)")
+          PY
+          node --check /tmp/jarvis-dashboard.js
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
       - name: Build debug APK
