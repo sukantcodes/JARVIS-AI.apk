@@ -111,6 +111,15 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         web.loadUrl("file:///android_asset/index.html")
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::web.isInitialized) {
+            web.postDelayed({
+                if (::web.isInitialized) web.evaluateJavascript("window.refreshDeviceHealth && refreshDeviceHealth()", null)
+            }, 250)
+        }
+    }
+
     override fun onInit(statusCode: Int) {
         if (statusCode == TextToSpeech.SUCCESS) setTtsLanguageForText("")
     }
