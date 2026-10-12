@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private val aiExecutor = Executors.newSingleThreadExecutor()
     @Volatile private var suppressCommandSpeech = false
     private var wakeMode = false
+    private var awaitingWakeCommand = false
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("jarvis_local_memory", MODE_PRIVATE) }
     private var pendingSharePackage: String? = null
@@ -111,6 +112,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun listen() {
         wakeMode = false
+        awaitingWakeCommand = false
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             status("Speech recognition is unavailable. Enable a speech service on your phone.")
             return
@@ -122,7 +124,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun startWakeSession() {
         wakeMode = true
-        status("Wake-word session starting. Keep JARVIS open and say “Jarvis” followed by a command. Tap Stop to end.")
+        awaitingWakeCommand = false
+        status("Wake-word session starting. Say “Jarvis” and your command together, or say “Jarvis” then give the command in your next sentence. Keep JARVIS open; tap Stop to end.")
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
         } else listenNow()
@@ -130,6 +133,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun stopWakeSession() {
         wakeMode = false
+        awaitingWakeCommand = false
         handler.removeCallbacksAndMessages(null)
         recognizer?.cancel()
         status("Wake-word session stopped.")
@@ -152,21 +156,31 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() { if (!wakeMode) status("Processing…") }
                 override fun onError(error: Int) {
-                    if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 650)
+                    if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 1100)
                     else status("Speech recognition stopped. Tap the microphone and try again.")
                 }
                 override fun onResults(results: Bundle?) {
                     val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                     if (wakeMode) {
-                        val lower = heard.lowercase(Locale.ROOT)
                         val wakeMatch = Regex("jarvis|जार्विस", RegexOption.IGNORE_CASE).find(heard)
-                        if (wakeMatch != null) {
-                            val afterWake = heard.removeRange(wakeMatch.range).trim().trim(',', '.', ' ')
-                            if (afterWake.isNotBlank()) command(afterWake) else say(if (lang == "hi-IN") "जी, बताइए।" else "Yes, I'm listening.")
-                        } else {
-                            status("Heard: $heard — say “Jarvis” before your command.")
+                        when {
+                            wakeMatch != null -> {
+                                val afterWake = heard.removeRange(wakeMatch.range).trim().trim(',', '.', ' ')
+                                if (afterWake.isNotBlank()) {
+                                    awaitingWakeCommand = false
+                                    command(afterWake)
+                                } else {
+                                    awaitingWakeCommand = true
+                                    status("Wake word detected. Say your command now.")
+                                }
+                            }
+                            awaitingWakeCommand && heard.isNotBlank() -> {
+                                awaitingWakeCommand = false
+                                command(heard)
+                            }
+                            else -> status("Heard: $heard — say “Jarvis” to activate a command.")
                         }
-                        if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 700)
+                        if (wakeMode) handler.postDelayed({ if (wakeMode) listenNow() }, 1100)
                     } else {
                         status("You said: $heard")
                         command(heard)
