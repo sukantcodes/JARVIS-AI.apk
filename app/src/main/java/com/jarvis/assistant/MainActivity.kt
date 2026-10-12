@@ -481,22 +481,36 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             .put("speechAvailable", SpeechRecognizer.isRecognitionAvailable(this@MainActivity))
             .toString()
 
+        // WebView JavaScript interfaces are invoked on a background thread.
+        // SpeechRecognizer and UI-bound Android APIs must be touched on the main thread.
         @JavascriptInterface
-        fun startListening() = this@MainActivity.listen()
+        fun startListening() {
+            runOnUiThread { this@MainActivity.listen() }
+        }
 
         @JavascriptInterface
-        fun startWakeWord() = this@MainActivity.startWakeSession()
+        fun startWakeWord() {
+            runOnUiThread { this@MainActivity.startWakeSession() }
+        }
 
         @JavascriptInterface
-        fun stopWakeWord() = this@MainActivity.stopWakeSession()
+        fun stopWakeWord() {
+            runOnUiThread { this@MainActivity.stopWakeSession() }
+        }
 
         @JavascriptInterface
-        fun runCommand(text: String) = this@MainActivity.command(text)
+        fun runCommand(text: String) {
+            runOnUiThread { this@MainActivity.command(text) }
+        }
 
         @JavascriptInterface
-        fun speak(text: String) = this@MainActivity.say(text)
+        fun speak(text: String) {
+            runOnUiThread { this@MainActivity.say(text) }
+        }
 
         @JavascriptInterface
-        fun askAI(text: String) = this@MainActivity.askGemini(text)
+        fun askAI(text: String) {
+            runOnUiThread { this@MainActivity.askGemini(text) }
+        }
     }
 }
