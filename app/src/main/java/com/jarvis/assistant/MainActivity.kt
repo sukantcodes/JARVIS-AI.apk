@@ -355,6 +355,128 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         else say("I couldn't perform $action on this screen. Android or the current app may block that action.")
     }
 
+    private fun configureGeminiKey(rawKey: String) {
+        val key = rawKey.trim()
+        if (key.isBlank()) {
+            geminiApiKey = ""
+            prefs.edit().remove("gemini_api_key").apply()
+            status("Gemini API key removed. JARVIS is using local commands.")
+            return
+        }
+        geminiApiKey = key
+        prefs.edit().putString("gemini_api_key", key).apply()
+        status("Gemini key saved on this device. Test with a natural voice command.")
+    }
+
+    private fun askGeminiAgent(utterance: String) {
+        val key = geminiApiKey.trim()
+        if (key.isBlank()) {
+            status("Configure your Gemini API key in the AI section first.")
+            return
+        }
+        if (utterance.isBlank()) {
+            say("I didn't hear a command.")
+            return
+        }
+        status("JARVIS is understanding your request…")
+        aiExecutor.execute {
+            var connection: HttpURLConnection? = null
+            try {
+                val selectedLanguage = when (lang) {
+                    "hi-IN" -> "Hindi or natural Hinglish, matching the user's utterance"
+                    "bn-IN" -> "Bengali, matching the user's utterance"
+                    else -> "English, unless the user clearly speaks another language"
+                }
+                val systemPrompt = """
+                    You are the natural-language planner for an Android voice assistant called JARVIS.
+                    Understand the user's request and return ONLY valid JSON with keys action, command, reply.
+                    action must be exactly "command", "reply", or "clarify".
+                    command is an instruction for the local app; reply is a short spoken response in $selectedLanguage.
+                    Speak in the same language as the user's actual message (English, Hindi, Hinglish, or Bengali), not always Hindi.
+                    For supported tasks, translate ordinary speech into one concise command from this command vocabulary:
+                    open camera; battery info; open settings; open wifi settings; open bluetooth settings;
+                    open app APPNAME; open instagram; open whatsapp; open youtube; open gallery;
+                    search for QUERY; open website DOMAIN; weather; news; play music; pause music;
+                    next song; previous song; go home; go back; recent apps; open notifications;
+                    quick settings; scroll down; scroll up; tap VISIBLE_LABEL; type TEXT;
+                    whatsapp search CONTACT; instagram search ACCOUNT; share photo on whatsapp;
+                    share video on whatsapp; share photo on instagram; share video on instagram;
+                    remember TEXT; note TEXT; show my notes; remind me to TEXT; set alarm TIME;
+                    device info; what time; help.
+                    For a request to launch an installed app, use "open app APPNAME".
+                    If the task needs an unsupported capability, say so honestly in reply and use action "reply".
+                    If details are missing, use "clarify" and ask one short question in reply.
+                    Never claim a task succeeded before the device reports it.
+                    Never initiate sending/posting a message, making a call, deleting data, or making a purchase. Ask for explicit confirmation first.
+                    Do not invent contacts, search results, permissions, or device capabilities.
+                    User's selected speech-recognition language: $lang.
+                """.trimIndent()
+                val body = JSONObject()
+                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
+                    .put("contents", JSONArray().put(JSONObject()
+                        .put("role", "user")
+                        .put("parts", JSONArray().put(JSONObject().put("text", utterance)))))
+                    .put("generationConfig", JSONObject()
+                        .put("responseMimeType", "application/json")
+                        .put("temperature", 0.2))
+                connection = (URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 20000
+                    readTimeout = 30000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("x-goog-api-key", key)
+                }
+                connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val responseBody = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                if (code !in 200..299) {
+                    val message = try { JSONObject(responseBody).optJSONObject("error")?.optString("message").orEmpty() } catch (_: Exception) { "" }
+                    throw IllegalStateException("Gemini API returned HTTP $code. " + message.take(240))
+                }
+                val payload = JSONObject(responseBody)
+                val text = payload.optJSONArray("candidates")?.optJSONObject(0)
+                    ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)
+                    ?.optString("text").orEmpty()
+                if (text.isBlank()) throw IllegalStateException("Gemini returned an empty response.")
+                val firstBrace = text.indexOf('{')
+                val lastBrace = text.lastIndexOf('}')
+                if (firstBrace < 0 || lastBrace <= firstBrace) throw IllegalStateException("Gemini returned an invalid action plan.")
+                val plan = JSONObject(text.substring(firstBrace, lastBrace + 1))
+                val action = plan.optString("action", "reply").lowercase(Locale.ROOT)
+                val localCommand = plan.optString("command", "").trim()
+                val spokenReply = plan.optString("reply", "").trim().ifBlank { "I understood your request, but I need you to clarify what you want me to do." }
+                runOnUiThread {
+                    when (action) {
+                        "command" -> {
+                            if (localCommand.isBlank()) {
+                                say(spokenReply)
+                            } else {
+                                suppressCommandSpeech = true
+                                try { executeCommand(localCommand) } finally { suppressCommandSpeech = false }
+                                say(spokenReply)
+                            }
+                        }
+                        "clarify", "reply" -> say(spokenReply)
+                        else -> say(spokenReply)
+                    }
+                }
+            } catch (e: Exception) {
+                val message = e.message?.take(320) ?: "Unknown network error"
+                runOnUiThread {
+                    status("Gemini error: $message")
+                    tts?.let {
+                        setTtsLanguageForText("")
+                        it.speak("I couldn't reach Gemini. Check the API key, internet connection, and API quota.", TextToSpeech.QUEUE_FLUSH, null, "jarvis_error")
+                    }
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
+    }
+
     private fun command(raw: String) {
         val q = raw.trim()
         val s = q.lowercase(Locale.ROOT)
