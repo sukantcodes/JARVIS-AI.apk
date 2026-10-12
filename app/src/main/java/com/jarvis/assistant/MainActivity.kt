@@ -234,6 +234,16 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun accessibilityAction(action: String) {
+        if (!JarvisAccessibilityService.isEnabled()) {
+            say("Accessibility control is not enabled. Open Accessibility settings and enable JARVIS only if you trust this app.")
+            safeLaunch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "Opening Android Accessibility settings.")
+            return
+        }
+        if (JarvisAccessibilityService.runAction(action)) say("Done: $action.")
+        else say("I couldn't perform $action on this screen. Android or the current app may block that action.")
+    }
+
     private fun command(raw: String) {
         val q = raw.trim()
         val s = q.lowercase(Locale.ROOT)
@@ -249,6 +259,18 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 saveNote(note)
             }
             s.contains("what do you remember") || s.contains("show my notes") || s.contains("read my notes") -> showMemory()
+            s.contains("unlock phone") || s.contains("unlock device") || s.contains("enter my password") -> say("For your security, JARVIS cannot collect or enter your screen-lock password or bypass Android's lock screen. Unlock using your phone's normal PIN, password, pattern, or biometrics.")
+            s.contains("enable accessibility") || s.contains("accessibility settings") -> safeLaunch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "Opening Accessibility settings. Review the service permissions before enabling.")
+            s == "go home" || s == "home screen" -> accessibilityAction("home")
+            s == "go back" || s == "press back" -> accessibilityAction("back")
+            s.contains("recent apps") || s == "open recents" -> accessibilityAction("recents")
+            s.contains("open notifications") || s == "notifications" -> accessibilityAction("notifications")
+            s.contains("quick settings") -> accessibilityAction("quick settings")
+            s.contains("lock device") || s == "lock screen" -> accessibilityAction("lock screen")
+            s == "scroll down" -> accessibilityAction("scroll down")
+            s == "scroll up" -> accessibilityAction("scroll up")
+            s.startsWith("tap ") -> accessibilityAction(q)
+            s.startsWith("click ") -> accessibilityAction(q)
             s.contains("battery") || s.contains("device info") || s.contains("phone information") -> deviceInfo()
             s.contains("open camera") || s == "camera" || s.contains("take a photo") -> safeLaunch(Intent(MediaStore.ACTION_IMAGE_CAPTURE), "Opening the camera. Press the shutter in your camera app.")
             s.contains("weather") -> webSearch("weather near me")
@@ -296,6 +318,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     inner class Bridge {
         @JavascriptInterface fun startListening() = listen()
         @JavascriptInterface fun startWakeWord() = startWakeSession()
+        @JavascriptInterface fun openAccessibilitySettings() = safeLaunch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "Opening Accessibility settings. Review the service permissions before enabling.")
         @JavascriptInterface fun stopWakeWord() = stopWakeSession()
         @JavascriptInterface fun setLanguage(code: String) {
             lang = when (code.uppercase(Locale.ROOT)) { "HI" -> "hi-IN"; "BN" -> "bn-IN"; else -> "en-IN" }
