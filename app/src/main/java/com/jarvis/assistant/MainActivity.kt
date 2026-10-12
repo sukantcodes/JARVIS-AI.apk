@@ -537,6 +537,51 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         say("I'll remember that on this device.")
     }
 
+    private fun addTask(rawTitle: String) {
+        val title = rawTitle.trim().take(200)
+        if (title.isBlank()) {
+            say(when (lang) { "hi-IN" -> "कृपया बताइए कि कौन-सा काम जोड़ना है।"; "bn-IN" -> "কোন কাজটি যোগ করতে হবে বলুন।"; else -> "Tell me the task you want to add." })
+            return
+        }
+        val tasks = prefs.getString("tasks", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
+        if (tasks.any { it.equals(title, ignoreCase = true) }) {
+            say(when (lang) { "hi-IN" -> "यह काम पहले से आपकी सूची में है।"; "bn-IN" -> "কাজটি ইতিমধ্যেই আপনার তালিকায় আছে।"; else -> "That task is already on your list." })
+            return
+        }
+        tasks.add(title)
+        prefs.edit().putString("tasks", tasks.takeLast(50).joinToString("\n")).apply()
+        say(when (lang) { "hi-IN" -> "काम आपकी सूची में जोड़ दिया: $title"; "bn-IN" -> "কাজটি আপনার তালিকায় যোগ করেছি: $title"; else -> "Task added: $title." })
+    }
+
+    private fun showTasks() {
+        val tasks = prefs.getString("tasks", "").orEmpty().lines().filter { it.isNotBlank() }
+        if (tasks.isEmpty()) {
+            say(when (lang) { "hi-IN" -> "आपकी काम की सूची अभी खाली है।"; "bn-IN" -> "আপনার কাজের তালিকা এখন খালি।"; else -> "Your task list is empty." })
+            return
+        }
+        val header = when (lang) { "hi-IN" -> "आपके बाकी काम: "; "bn-IN" -> "আপনার বাকি কাজ: "; else -> "Your pending tasks: " }
+        say((header + tasks.mapIndexed { i, task -> "${i + 1}. $task" }.joinToString(". ")).take(1800))
+    }
+
+    private fun completeTask(rawQuery: String) {
+        val query = rawQuery.trim()
+        val tasks = prefs.getString("tasks", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
+        if (tasks.isEmpty()) {
+            say(when (lang) { "hi-IN" -> "आपकी काम की सूची खाली है।"; "bn-IN" -> "আপনার কাজের তালিকা খালি।"; else -> "Your task list is empty." })
+            return
+        }
+        val index = query.toIntOrNull()?.minus(1)?.takeIf { it in tasks.indices }
+            ?: tasks.indexOfFirst { it.equals(query, ignoreCase = true) }.takeIf { it >= 0 }
+            ?: tasks.indexOfFirst { it.contains(query, ignoreCase = true) }.takeIf { it >= 0 }
+        if (index == null || query.isBlank()) {
+            say(when (lang) { "hi-IN" -> "कौन-सा काम पूरा हुआ? सूची का नंबर या उसका नाम बताइए।"; "bn-IN" -> "কোন কাজটি শেষ হয়েছে? তালিকার নম্বর বা নাম বলুন।"; else -> "Which task is complete? Say its list number or task name." })
+            return
+        }
+        val completed = tasks.removeAt(index)
+        prefs.edit().putString("tasks", tasks.joinToString("\n")).apply()
+        say(when (lang) { "hi-IN" -> "काम पूरा हुआ के रूप में हटाया: $completed"; "bn-IN" -> "সম্পন্ন কাজ হিসেবে তালিকা থেকে সরালাম: $completed"; else -> "Marked complete and removed from your pending list: $completed." })
+    }
+
     private fun showMemory() {
         val memory = prefs.getString("memory", "").orEmpty()
         val notes = prefs.getString("notes", "").orEmpty()
@@ -641,7 +686,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     quick settings; scroll down; scroll up; tap VISIBLE_LABEL; type TEXT;
                     whatsapp search CONTACT; instagram search ACCOUNT; share photo on whatsapp;
                     share video on whatsapp; share photo on instagram; share video on instagram;
-                    remember TEXT; note TEXT; show my notes; remind me to TEXT; set alarm TIME;
+                    remember TEXT; note TEXT; show my notes; add task TEXT; show tasks; complete task NAME_OR_NUMBER; remind me to TEXT; set alarm TIME;
                     device info; what time; help; call CONTACT.
                     For a request to launch an installed app, use "open app APPNAME".
                     If the task needs an unsupported capability, say so honestly in reply and use action "reply".
@@ -744,8 +789,24 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             s.startsWith("play store search ") -> openPlayStoreSearch(q.substringAfter("play store search "))
             s.startsWith("install apk ") -> openApkSource(q.substringAfter("install apk "))
             s.startsWith("download apk ") -> openApkSource(q.substringAfter("download apk "))
-            s == "help" || s == "what can you do" || s == "madad" || s.contains("kya kar sakte ho") || s.contains("क्या कर सकते हो") || s.contains("मदद") -> say(if (lang == "hi-IN") "मैं ऐप्स और सेटिंग्स खोल सकता हूँ, वेब खोज सकता हूँ, मौसम और समाचार दिखा सकता हूँ, कैमरा खोल सकता हूँ, संगीत नियंत्रित कर सकता हूँ, नोट्स और यादें सहेज सकता हूँ, रिमाइंडर बना सकता हूँ और बैटरी की जानकारी बता सकता हूँ।" else "I can open installed apps by name, use supported accessibility actions like tap, type, scroll and back, open settings, search the web, show weather and news, control basic media keys, save notes, create reminders, and report device details.")
+            s == "help" || s == "what can you do" || s == "madad" || s.contains("kya kar sakte ho") || s.contains("क्या कर सकते हो") || s.contains("मदद") -> say(if (lang == "hi-IN") "मैं ऐप्स और सेटिंग्स खोल सकता हूँ, वेब खोज सकता हूँ, मौसम और समाचार दिखा सकता हूँ, कैमरा खोल सकता हूँ, संगीत नियंत्रित कर सकता हूँ, नोट्स, यादें और काम सहेज सकता हूँ, रिमाइंडर बना सकता हूँ और बैटरी की जानकारी बता सकता हूँ।" else "I can open installed apps by name, use supported accessibility actions like tap, type, scroll and back, open settings, search the web, show weather and news, control basic media keys, save notes, create reminders, and report device details.")
             s.contains("what time") || s == "time" || s.contains("what date") || s == "date" || s.contains("kitne baje") || s.contains("samay batao") || s.contains("time batao") || s.contains("tareekh batao") || s.contains("कितने बजे") || s.contains("समय बताओ") || s.contains("तारीख बताओ") -> say((if (lang == "hi-IN") "अभी तारीख और समय है: " else "The date and time is: ") + DateFormat.getDateTimeInstance().format(Date()))
+            s.startsWith("add task ") || s.startsWith("create task ") || s.startsWith("task add ") || s.startsWith("काम जोड़ो ") || s.startsWith("काम जोड़ें ") || s.startsWith("কাজ যোগ করুন ") -> addTask(when {
+                s.startsWith("create task ") -> q.substringAfter("create task ")
+                s.startsWith("task add ") -> q.substringAfter("task add ")
+                s.startsWith("काम जोड़ो ") -> q.substringAfter("काम जोड़ो ")
+                s.startsWith("काम जोड़ें ") -> q.substringAfter("काम जोड़ें ")
+                s.startsWith("কাজ যোগ করুন ") -> q.substringAfter("কাজ যোগ করুন ")
+                else -> q.substringAfter("add task ")
+            })
+            s == "show tasks" || s == "list tasks" || s == "my tasks" || s.contains("what are my tasks") || s.contains("mere task dikhao") || s.contains("मेरे काम दिखाओ") || s.contains("আমার কাজ দেখাও") -> showTasks()
+            s.startsWith("complete task ") || s.startsWith("finish task ") || s.startsWith("mark task complete ") || s.startsWith("काम पूरा ") || s.startsWith("কাজ শেষ ") -> completeTask(when {
+                s.startsWith("finish task ") -> q.substringAfter("finish task ")
+                s.startsWith("mark task complete ") -> q.substringAfter("mark task complete ")
+                s.startsWith("काम पूरा ") -> q.substringAfter("काम पूरा ")
+                s.startsWith("কাজ শেষ ") -> q.substringAfter("কাজ শেষ ")
+                else -> q.substringAfter("complete task ")
+            })
             s.startsWith("remember ") -> remember(q.substringAfter("remember ", ""))
             s.startsWith("remember that ") -> remember(q.substringAfter("remember that ", ""))
             s.startsWith("yaad rakho ") -> remember(q.substringAfter("yaad rakho ", ""))
