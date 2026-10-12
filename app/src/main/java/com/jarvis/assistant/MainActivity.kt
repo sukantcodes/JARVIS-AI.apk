@@ -819,10 +819,60 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    /**
+     * Keep deterministic device commands local. If a Gemini key is configured, only
+     * send requests that need natural-language planning to the network. This lets
+     * everyday commands continue to work without internet and avoids AI latency for
+     * app launches, notes, tasks, alarms, settings, and device navigation.
+     */
+    private fun isLocalCommand(raw: String): Boolean {
+        val s = raw.trim().lowercase(Locale.ROOT)
+        if (s.isBlank()) return true
+        if (extractCallName(raw) != null) return true
+        if (pendingCallNumber != null && (isConfirmCallCommand(s) || isCancelCallCommand(s))) return true
+        val exact = setOf(
+            "help", "what can you do", "madad", "time", "date", "what time", "what date",
+            "battery info", "device info", "battery", "camera", "news", "weather", "mausam",
+            "samachar", "show tasks", "list tasks", "my tasks", "show my notes", "what do you remember",
+            "stop listening", "stop wake word", "stop wakeword", "contacts access", "microphone permission",
+            "permission settings", "app permissions", "manage permissions", "settings",
+            "open settings", "open camera", "open phone", "dialer", "open instagram",
+            "open whatsapp", "open youtube", "open gallery", "open photos", "play music",
+            "pause music", "resume music", "next song", "next track", "previous song",
+            "previous track", "go home", "home screen", "go back", "press back", "recent apps",
+            "open recents", "notifications", "open notifications", "quick settings", "lock device",
+            "lock screen", "scroll down", "scroll up", "open wifi settings", "open bluetooth settings"
+        )
+        if (s in exact) return true
+        val prefixes = listOf(
+            "open app ", "launch app ", "open ", "launch ", "add task ", "create task ", "task add ",
+            "complete task ", "finish task ", "mark task complete ", "remove task ", "delete task ",
+            "remember ", "note ", "save note ", "remind me to ", "set alarm ", "install app ",
+            "download app ", "play store search ", "install apk ", "download apk ", "search for ",
+            "google ", "google par ", "search karo ", "खोजो ", "open website ", "whatsapp search ",
+            "search whatsapp for ", "instagram search ", "search instagram for ", "type ", "tap ",
+            "click ", "share photo ", "send photo ", "share video ", "send video ", "call ",
+            "phone ", "dial ", "मुझे याद दिलाना ", "मुझे याद दिलाओ ", "काम जोड़ो ", "काम जोड़ें ",
+            "কাজ যোগ করুন ", "কাজ শেষ ", "কাজ যোগ করুন "
+        )
+        if (prefixes.any { s.startsWith(it) }) return true
+        val localHints = listOf(
+            "battery", "बैटरी", "फोन की जानकारी", "बैटरी कितनी है", "कितने बजे", "समय बताओ",
+            "तारीख बताओ", "कैमरा खोलो", "फोटो लो", "सेटिंग्स खोलो", "वाई-फाई", "वाई फाई",
+            "ब्लूटूथ", "घर जाओ", "वापस जाओ", "होम पर जाओ", "फोन लॉक करो", "गाना रोको",
+            "गाना चलाओ", "म्यूजिक चलाओ", "अगला गाना", "पिछला गाना", "खबर", "समाचार", "मौसम",
+            "व्हाट्सएप खोलो", "इंस्टाग्राम खोलो", "यूट्यूब खोलो", "गैलरी खोलो", "मेरे काम दिखाओ",
+            "मेरे नोट्स", "क्या याद है", "আমার কাজ দেখাও"
+        )
+        return localHints.any { s.contains(it) }
+    }
+
     private fun command(raw: String) {
         val normalized = raw.trim().lowercase(Locale.ROOT)
-        val callCommand = extractCallName(raw) != null || (pendingCallNumber != null && (isConfirmCallCommand(normalized) || isCancelCallCommand(normalized)))
-        if (geminiApiKey.isNotBlank() && !callCommand && normalized !in listOf("stop listening", "stop wake word", "stop wakeword")) {
+        val callCommand = extractCallName(raw) != null ||
+            (pendingCallNumber != null && (isConfirmCallCommand(normalized) || isCancelCallCommand(normalized)))
+        val stopCommand = normalized in listOf("stop listening", "stop wake word", "stop wakeword")
+        if (geminiApiKey.isNotBlank() && !callCommand && !stopCommand && !isLocalCommand(raw)) {
             askGeminiAgent(raw)
         } else {
             executeCommand(raw)
