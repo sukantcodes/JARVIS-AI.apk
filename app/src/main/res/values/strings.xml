@@ -1,1 +1,5 @@
-<resources><string name="app_name">JARVIS AI</string></resources>
+<resources>
+    <string name="app_name">JARVIS AI</string>
+    <string name="accessibility_service_label">JARVIS device navigation</string>
+    <string name="accessibility_service_description">Optional user-enabled service for explicit commands such as Home, Back, Recents, Notifications, Quick Settings, scrolling, and tapping visible UI items by their text. It does not capture passwords or bypass the device lock screen.</string>
+</resources>
