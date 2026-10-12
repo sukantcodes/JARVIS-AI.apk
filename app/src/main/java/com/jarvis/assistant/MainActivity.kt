@@ -595,6 +595,21 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         say(when (lang) { "hi-IN" -> "काम पूरा हुआ के रूप में हटाया: $completed"; "bn-IN" -> "সম্পন্ন কাজ হিসেবে তালিকা থেকে সরালাম: $completed"; else -> "Marked complete and removed from your pending list: $completed." })
     }
 
+    private fun removeTask(rawQuery: String) {
+        val query = rawQuery.trim()
+        val tasks = prefs.getString("tasks", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
+        val index = query.toIntOrNull()?.minus(1)?.takeIf { it in tasks.indices }
+            ?: tasks.indexOfFirst { it.equals(query, ignoreCase = true) }.takeIf { it >= 0 }
+            ?: tasks.indexOfFirst { it.contains(query, ignoreCase = true) }.takeIf { it >= 0 }
+        if (index == null || query.isBlank()) {
+            say(when (lang) { "hi-IN" -> "हटाने के लिए सूची का सही नंबर या काम का नाम बताइए।"; "bn-IN" -> "সরাতে তালিকার সঠিক নম্বর বা কাজের নাম বলুন।"; else -> "Say a valid task number or task name to remove." })
+            return
+        }
+        val removed = tasks.removeAt(index)
+        prefs.edit().putString("tasks", tasks.joinToString("\n")).apply()
+        say(when (lang) { "hi-IN" -> "काम सूची से हटा दिया: $removed"; "bn-IN" -> "কাজটি তালিকা থেকে সরিয়েছি: $removed"; else -> "Removed task: $removed." })
+    }
+
     private fun showMemory() {
         val memory = prefs.getString("memory", "").orEmpty()
         val notes = prefs.getString("notes", "").orEmpty()
@@ -700,8 +715,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     quick settings; scroll down; scroll up; tap VISIBLE_LABEL; type TEXT;
                     whatsapp search CONTACT; instagram search ACCOUNT; share photo on whatsapp;
                     share video on whatsapp; share photo on instagram; share video on instagram;
-                    remember TEXT; note TEXT; show my notes; add task TEXT; show tasks; complete task NAME_OR_NUMBER; remind me to TEXT; set alarm TIME;
-                    add task TEXT; list tasks; complete task NUMBER; remove task NUMBER;
+                    remember TEXT; note TEXT; show my notes; add task TEXT; show tasks; complete task NUMBER_OR_NAME; remove task NUMBER_OR_NAME; remind me to TEXT; set alarm TIME;
                     device info; what time; help; call CONTACT.
                     For a request to launch an installed app, use "open app APPNAME".
                     If the task needs an unsupported capability, say so honestly in reply and use action "reply".
@@ -823,6 +837,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 s.startsWith("কাজ শেষ ") -> q.substringAfter("কাজ শেষ ")
                 else -> q.substringAfter("complete task ")
             })
+            s.startsWith("remove task ") || s.startsWith("delete task ") -> removeTask(q.substringAfter("task "))
             s.startsWith("remember ") -> remember(q.substringAfter("remember ", ""))
             s.startsWith("remember that ") -> remember(q.substringAfter("remember that ", ""))
             s.startsWith("yaad rakho ") -> remember(q.substringAfter("yaad rakho ", ""))
