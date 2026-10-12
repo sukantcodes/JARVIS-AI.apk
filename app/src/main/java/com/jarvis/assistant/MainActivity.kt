@@ -1021,7 +1021,27 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun deviceStatusJson(): String {
+        val batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager
+        val battery = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val model = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL
+        val version = android.os.Build.VERSION.RELEASE ?: "Unknown"
+        val appVersion = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "Unknown" } catch (_: Exception) { "Unknown" }
+        return JSONObject()
+            .put("model", model)
+            .put("android", version)
+            .put("sdk", android.os.Build.VERSION.SDK_INT)
+            .put("battery", battery)
+            .put("appVersion", appVersion)
+            .put("speechAvailable", SpeechRecognizer.isRecognitionAvailable(this))
+            .put("accessibilityEnabled", JarvisAccessibilityService.isEnabled())
+            .put("aiConfigured", geminiApiKey.isNotBlank())
+            .put("language", lang)
+            .toString()
+    }
+
     inner class Bridge {
+        @JavascriptInterface fun getDeviceStatus(): String = deviceStatusJson()
         @JavascriptInterface fun startListening() = listen()
         @JavascriptInterface fun startWakeWord() = startWakeSession()
         @JavascriptInterface fun openAccessibilitySettings() = safeLaunch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "Opening Accessibility settings. Review the service permissions before enabling.")
