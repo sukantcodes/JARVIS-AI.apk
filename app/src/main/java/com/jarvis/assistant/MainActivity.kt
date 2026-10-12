@@ -259,7 +259,14 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             s.startsWith("yaad rakhna ") -> remember(q.substringAfter("yaad rakhna ", ""))
             s.startsWith("याद रखो ") -> remember(q.substringAfter("याद रखो ", ""))
             s.startsWith("note ") || s.startsWith("save note ") || s.startsWith("take a note ") || s.startsWith("note likho ") || s.startsWith("note save karo ") || s.startsWith("नोट लिखो ") -> {
-                val note = q.substringAfter("note ", q.substringAfter("save note ", q.substringAfter("take a note ", "")))
+                val note = when {
+                    s.startsWith("note likho ") -> q.substringAfter("note likho ")
+                    s.startsWith("note save karo ") -> q.substringAfter("note save karo ")
+                    s.startsWith("नोट लिखो ") -> q.substringAfter("नोट लिखो ")
+                    s.startsWith("save note ") -> q.substringAfter("save note ")
+                    s.startsWith("take a note ") -> q.substringAfter("take a note ")
+                    else -> q.substringAfter("note ")
+                }
                 saveNote(note)
             }
             s.contains("what do you remember") || s.contains("show my notes") || s.contains("read my notes") || s.contains("meri notes dikhao") || s.contains("kya yaad hai") || s.contains("मेरे नोट्स दिखाओ") || s.contains("क्या याद है") -> showMemory()
