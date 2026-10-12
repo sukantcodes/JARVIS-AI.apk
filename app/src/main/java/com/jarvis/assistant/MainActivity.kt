@@ -111,14 +111,20 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun setTtsLanguageForText(text: String) {
-        val locale = when {
-            Regex("[\\u0980-\\u09FF]").containsMatchIn(text) -> Locale("bn", "IN")
-            Regex("[\\u0900-\\u097F]").containsMatchIn(text) -> Locale("hi", "IN")
-            lang == "hi-IN" -> Locale("hi", "IN")
-            lang == "bn-IN" -> Locale("bn", "IN")
+        // The selected language controls the voice; don't switch languages based on reply script.
+        val locale = when (lang) {
+            "hi-IN" -> Locale("hi", "IN")
+            "bn-IN" -> Locale("bn", "IN")
             else -> Locale("en", "IN")
         }
-        try { tts?.language = locale } catch (_: Exception) { tts?.language = Locale.US }
+        try {
+            val result = tts?.setLanguage(locale) ?: TextToSpeech.LANG_NOT_SUPPORTED
+            if (result == TextToSpeech.LANG_NOT_SUPPORTED || result == TextToSpeech.LANG_MISSING_DATA) {
+                tts?.setLanguage(Locale.US)
+            }
+        } catch (_: Exception) {
+            try { tts?.setLanguage(Locale.US) } catch (_: Exception) { }
+        }
     }
 
     private fun status(text: String) {
