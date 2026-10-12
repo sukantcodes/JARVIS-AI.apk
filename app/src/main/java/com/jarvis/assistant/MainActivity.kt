@@ -337,6 +337,34 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         safeLaunch(Intent.createChooser(send, "Choose where to share with $label"), "Media selected. Choose the destination or chat in $label and review it before sending.")
     }
 
+    private fun requestMicrophoneAccess() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            say(when (lang) { "hi-IN" -> "माइक्रोफ़ोन अनुमति पहले से चालू है।"; "bn-IN" -> "মাইক্রোফোনের অনুমতি ইতিমধ্যেই চালু আছে।"; else -> "Microphone permission is already enabled." })
+        } else {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun openPlayStoreSearch(rawName: String) {
+        val name = rawName.trim()
+        if (name.isBlank()) { say("Tell me the app name."); return }
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=" + Uri.encode(name))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            say(when (lang) { "hi-IN" -> "$name के लिए Play Store खोल रहा हूँ। ऐप की जाँच करके Install दबाएँ।"; "bn-IN" -> "$name-এর জন্য Play Store খুলছি। অ্যাপ যাচাই করে Install চাপুন।"; else -> "Opening Play Store results for $name. Verify the publisher and tap Install." })
+        } catch (_: Exception) {
+            safeLaunch(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/search?q=" + Uri.encode(name) + "&c=apps")), "Opening Play Store search for $name. Verify the publisher before installing.")
+        }
+    }
+
+    private fun openApkSource(rawUrl: String) {
+        val uri = try { Uri.parse(rawUrl.trim()) } catch (_: Exception) { null }
+        if (uri == null || uri.scheme != "https" || uri.host.isNullOrBlank()) {
+            say("For safety, provide a valid HTTPS link. JARVIS cannot silently install an APK.")
+            return
+        }
+        safeLaunch(Intent(Intent.ACTION_VIEW, uri), "Opening the APK link in your browser. Verify the source, then review and confirm installation in Android's installer.")
+    }
+
     private fun requestContactsAccess() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
             status("Contacts access is already enabled.")
@@ -590,7 +618,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             say("I didn't hear a command.")
             return
         }
-        status("JARVIS is understanding your request…")
+        say(when (lang) { "hi-IN" -> "मैं आपकी बात समझ रहा हूँ।"; "bn-IN" -> "আমি আপনার কথা বুঝছি।"; else -> "I am understanding your request." })
         aiExecutor.execute {
             var connection: HttpURLConnection? = null
             try {
@@ -607,7 +635,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     Speak in the same language as the user's actual message (English, Hindi, Hinglish, or Bengali), not always Hindi.
                     For supported tasks, translate ordinary speech into one concise command from this command vocabulary:
                     open camera; battery info; open settings; open wifi settings; open bluetooth settings;
-                    open app APPNAME; open instagram; open whatsapp; open youtube; open gallery;
+                    open app APPNAME; install app APPNAME; install apk HTTPS_URL; open instagram; open whatsapp; open youtube; open gallery;
                     search for QUERY; open website DOMAIN; weather; news; play music; pause music;
                     next song; previous song; go home; go back; recent apps; open notifications;
                     quick settings; scroll down; scroll up; tap VISIBLE_LABEL; type TEXT;
@@ -709,6 +737,13 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             pendingCallNumber != null && isConfirmCallCommand(s) -> placePendingCall()
             extractCallName(q) != null -> findAndConfirmContact(extractCallName(q).orEmpty())
             s == "contacts access" || s == "grant contacts access" || s == "contacts permission" -> requestContactsAccess()
+            s == "microphone permission" || s == "grant microphone access" || s == "mic permission" -> requestMicrophoneAccess()
+            s == "permission settings" || s == "app permissions" || s == "manage permissions" -> safeLaunch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")), "Opening JARVIS app settings. Review and change permissions there.")
+            s.startsWith("install app ") -> openPlayStoreSearch(q.substringAfter("install app "))
+            s.startsWith("download app ") -> openPlayStoreSearch(q.substringAfter("download app "))
+            s.startsWith("play store search ") -> openPlayStoreSearch(q.substringAfter("play store search "))
+            s.startsWith("install apk ") -> openApkSource(q.substringAfter("install apk "))
+            s.startsWith("download apk ") -> openApkSource(q.substringAfter("download apk "))
             s == "help" || s == "what can you do" || s == "madad" || s.contains("kya kar sakte ho") || s.contains("क्या कर सकते हो") || s.contains("मदद") -> say(if (lang == "hi-IN") "मैं ऐप्स और सेटिंग्स खोल सकता हूँ, वेब खोज सकता हूँ, मौसम और समाचार दिखा सकता हूँ, कैमरा खोल सकता हूँ, संगीत नियंत्रित कर सकता हूँ, नोट्स और यादें सहेज सकता हूँ, रिमाइंडर बना सकता हूँ और बैटरी की जानकारी बता सकता हूँ।" else "I can open installed apps by name, use supported accessibility actions like tap, type, scroll and back, open settings, search the web, show weather and news, control basic media keys, save notes, create reminders, and report device details.")
             s.contains("what time") || s == "time" || s.contains("what date") || s == "date" || s.contains("kitne baje") || s.contains("samay batao") || s.contains("time batao") || s.contains("tareekh batao") || s.contains("कितने बजे") || s.contains("समय बताओ") || s.contains("तारीख बताओ") -> say((if (lang == "hi-IN") "अभी तारीख और समय है: " else "The date and time is: ") + DateFormat.getDateTimeInstance().format(Date()))
             s.startsWith("remember ") -> remember(q.substringAfter("remember ", ""))
@@ -830,6 +865,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
         @JavascriptInterface fun configureGemini(key: String) = configureGeminiKey(key)
         @JavascriptInterface fun requestContactsAccess() = this@MainActivity.requestContactsAccess()
+        @JavascriptInterface fun requestMicrophoneAccess() = this@MainActivity.requestMicrophoneAccess()
         @JavascriptInterface fun findContact(name: String) = findAndConfirmContact(name)
         @JavascriptInterface fun confirmContactCall(name: String, number: String) = this@MainActivity.confirmContactCall(name, number)
         @JavascriptInterface fun speak(text: String) = say(text)
