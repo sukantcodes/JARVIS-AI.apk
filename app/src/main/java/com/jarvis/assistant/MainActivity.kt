@@ -402,9 +402,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             contentResolver.query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                 projection,
-                "\${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+                "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
                 arrayOf("%$safeQuery%"),
-                "\${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} COLLATE NOCASE ASC"
+                "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} COLLATE NOCASE ASC"
             )?.use { cursor ->
                 val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
                 val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
@@ -436,7 +436,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             candidates.size == 1 -> prepareCallConfirmation(candidates.first())
             else -> {
                 val preview = candidates.take(3).joinToString("; ") {
-                    "\${it.name}, number ending \${it.number.filter { ch -> ch.isDigit() }.takeLast(4)}"
+                    "${it.name}, number ending ${it.number.filter { ch -> ch.isDigit() }.takeLast(4)}"
                 }
                 say("I found several matches: $preview. Choose the correct number in the Contacts & Calling panel, or say the person's full name.")
             }
@@ -447,7 +447,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         pendingCallName = match.name
         pendingCallNumber = match.number
         val last4 = match.number.filter { it.isDigit() }.takeLast(4)
-        say("I found \${match.name}, number ending $last4. Say confirm call to place the call with speakerphone requested, or say cancel call.")
+        say("I found ${match.name}, number ending $last4. Say confirm call to place the call with speakerphone requested, or say cancel call.")
     }
 
     private fun confirmContactCall(name: String, number: String) {
